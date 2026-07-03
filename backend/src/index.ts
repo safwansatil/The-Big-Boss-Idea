@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import { prisma } from './db';
 import { getState, toggleDevice, getUsage } from './devices';
 import { getAlerts } from './alerts';
 import { startSimulator, broadcastState, simulatorEvents } from './simulator';
@@ -10,6 +11,7 @@ dotenv.config();
 const app = express();
 const port = process.env.BACKEND_PORT || 5000;
 
+// Enable CORS for all origins (dashboard, bot, local scripts)
 app.use(cors());
 app.use(express.json());
 
@@ -18,6 +20,38 @@ app.use((req, res, next) => {
   console.log(`[HTTP] ${req.method} ${req.path}`);
   next();
 });
+
+// List of all 15 valid device IDs in the system
+const VALID_DEVICE_IDS = [
+  'drawing-fan-1', 'drawing-fan-2', 'drawing-light-1', 'drawing-light-2', 'drawing-light-3',
+  'work1-fan-1', 'work1-fan-2', 'work1-light-1', 'work1-light-2', 'work1-light-3',
+  'work2-fan-1', 'work2-fan-2', 'work2-light-1', 'work2-light-2', 'work2-light-3'
+];
+
+/**
+ * REST: GET /health -> Health check endpoint verifying database connectivity
+ */
+const handleHealthCheck = async (req: express.Request, res: express.Response) => {
+  try {
+    // Run simple query to test DB connection
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({
+      status: 'healthy',
+      database: 'connected',
+      timestamp: new Date().toISOString()
+    });
+  } catch (err: any) {
+    console.error('[Health] DB Connection check failed:', err);
+    res.status(500).json({
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: err.message || String(err),
+      timestamp: new Date().toISOString()
+    });
+  }
+};
+app.get('/health', handleHealthCheck);
+app.get('/api/health', handleHealthCheck);
 
 /**
  * REST: GET /devices -> Retrieve all devices
@@ -89,6 +123,14 @@ app.get('/api/alerts', handleGetAlerts);
  */
 const handleToggleDevice = async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
+  
+  // Validate ID against list of seeded devices
+  if (!VALID_DEVICE_IDS.includes(id)) {
+    return res.status(400).json({ 
+      error: `Invalid device ID '${id}'. Expected one of: ${VALID_DEVICE_IDS.join(', ')}` 
+    });
+  }
+
   try {
     const updatedDevice = await toggleDevice(id);
     console.log(`[API] Manually toggled ${id} to ${updatedDevice.status}`);
@@ -109,6 +151,7 @@ app.post('/api/devices/:id/toggle', handleToggleDevice);
  * SSE: GET /stream -> Stream device status and alerts in real-time
  */
 const handleSseStream = async (req: express.Request, res: express.Response) => {
+  // Set headers for EventSource compatibility and CORS
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -144,7 +187,7 @@ const handleSseStream = async (req: express.Request, res: express.Response) => {
 
   simulatorEvents.on('change', onChange);
 
-  // 3. Close listener on disconnect
+  // 3. Close listener on disconnect cleanly to prevent memory leaks
   req.on('close', () => {
     console.log('[SSE] Connection closed.');
     simulatorEvents.off('change', onChange);
