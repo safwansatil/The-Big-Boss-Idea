@@ -1,19 +1,19 @@
 import { EventEmitter } from 'events';
-import { prisma } from './db';
-import { processAlertNotifications } from './alerts';
+import { getState, toggleDevice, getUsage } from './devices';
+import { getAlerts } from './alerts';
 
-// EventEmitter to broadcast state updates locally (e.g. to SSE clients)
+// EventEmitter to broadcast the state shape { devices, usage, alerts } locally
 export const simulatorEvents = new EventEmitter();
 
 let isRunning = false;
 
 /**
- * Starts the randomized simulation loop.
+ * Starts the randomized weighted device simulation.
  */
 export function startSimulator() {
   if (isRunning) return;
   isRunning = true;
-  console.log('[Simulator] Device simulation loop initialized.');
+  console.log('[Simulator] Weighted device simulation loop started.');
   scheduleNextTick();
 }
 
@@ -21,7 +21,7 @@ export function startSimulator() {
  * Schedules the next tick with a randomized delay between 5 and 15 seconds.
  */
 function scheduleNextTick() {
-  const delaySec = Math.floor(Math.random() * (15 - 5 + 1) + 5); // 5 to 15 seconds
+  const delaySec = Math.floor(Math.random() * (15 - 5 + 1) + 5);
   setTimeout(async () => {
     try {
       await tick();
@@ -33,51 +33,77 @@ function scheduleNextTick() {
 }
 
 /**
- * Executes a single simulation step: toggles 0, 1, or 2 random devices in the DB.
+ * Simulation tick: Toggles 0-2 random devices using workday weightings.
  */
 async function tick() {
-  const devices = await prisma.device.findMany();
+  const devices = await getState();
   if (devices.length === 0) {
-    console.warn('[Simulator] No devices found in database. Seed the DB first.');
+    console.warn('[Simulator] Database is empty. Seed the database first.');
     return;
   }
 
-  const countToToggle = Math.floor(Math.random() * 3); // 0, 1, or 2 devices
-  if (countToToggle === 0) {
+  const countToSelect = Math.floor(Math.random() * 3); // 0, 1, or 2 devices
+  if (countToSelect === 0) {
     return;
   }
 
-  // Shuffle and pick devices
+  // Weight decision based on current time (Work hours vs After hours)
+  const hour = new Date().getHours();
+  const isWorkHours = hour >= 9 && hour < 17;
+
+  // Shuffle device list and pick countToSelect devices
   const shuffled = [...devices].sort(() => 0.5 - Math.random());
-  const selected = shuffled.slice(0, countToToggle);
+  const selected = shuffled.slice(0, countToSelect);
 
-  for (const device of selected) {
-    const nextStatus = device.status === 'on' ? 'off' : 'on';
-    let nextPower = 0;
-    if (nextStatus === 'on') {
-      nextPower = device.type === 'fan' ? 60 : 15;
+  let updatedAny = false;
+
+  for (const dev of selected) {
+    const isCurrentlyOn = dev.status === 'on';
+    let shouldToggle = false;
+
+    if (isWorkHours) {
+      if (isCurrentlyOn) {
+        // High likelihood to stay ON (low toggle off chance: 15%)
+        shouldToggle = Math.random() < 0.15;
+      } else {
+        // High likelihood to turn ON (high toggle on chance: 75%)
+        shouldToggle = Math.random() < 0.75;
+      }
+    } else {
+      // After-hours (cozy night mode)
+      if (isCurrentlyOn) {
+        // High likelihood to turn OFF (high toggle off chance: 80%)
+        shouldToggle = Math.random() < 0.8;
+      } else {
+        // Rare chance to turn ON after hours (10%)
+        shouldToggle = Math.random() < 0.10;
+      }
     }
 
-    await prisma.device.update({
-      where: { id: device.id },
-      data: {
-        status: nextStatus,
-        powerDraw: nextPower,
-        lastChanged: new Date(),
-      },
-    });
-
-    console.log(`[Simulator] Automatically toggled ${device.id} to ${nextStatus} (${nextPower}W)`);
+    if (shouldToggle) {
+      await toggleDevice(dev.id);
+      console.log(`[Simulator] Auto-toggled ${dev.id} [WorkHours: ${isWorkHours}, Turned: ${dev.status === 'on' ? 'OFF' : 'ON'}]`);
+      updatedAny = true;
+    }
   }
 
-  // Fetch fresh states
-  const freshDevices = await prisma.device.findMany();
+  // Always broadcast fresh state on every simulation tick
+  await broadcastState();
+}
 
-  // Process alerts (sends discord webhook alert if new anomalies arise)
-  processAlertNotifications(freshDevices).catch((err) => {
-    console.error('[Simulator] Error processing alerts:', err);
-  });
+/**
+ * Fetches all states, computes aggregates, and fires SSE change event.
+ */
+export async function broadcastState() {
+  const devices = await getState();
+  const usage = await getUsage();
+  const alerts = await getAlerts();
 
-  // Emit change event to notify active SSE streams
-  simulatorEvents.emit('change', freshDevices);
+  const payload = {
+    devices,
+    usage,
+    alerts,
+  };
+
+  simulatorEvents.emit('change', payload);
 }

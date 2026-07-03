@@ -13,6 +13,16 @@ model Device {
   type        String // "fan" | "light"
   room        String // "drawing" | "work1" | "work2"
   status      String // "on" | "off"
-  powerDraw   Int      // Watts (Fan: 60W when on, Light: 15W when on, 0W when off)
+  powerDraw   Int      // Watts (Fan: 60W when ON, Light: 15W when ON, 0W when OFF)
   lastChanged DateTime @default(now())
+}
+
+model AlertLog {
+  id        String   @id @default(uuid())
+  type      String   // "after-hours" | "stuck-on"
+  room      String   // "drawing" | "work1" | "work2"
+  deviceIds Json     // JSON array of device IDs: e.g., ["work1-fan-1", "work1-light-2"]
+  message   String
+  timestamp DateTime @default(now())
+  resolved  Boolean  @default(false)
 }

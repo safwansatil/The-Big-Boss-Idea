@@ -1,9 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { prisma } from './db';
-import { startSimulator, simulatorEvents } from './simulator';
-import { computeAlerts, processAlertNotifications } from './alerts';
+import { getState, toggleDevice, getUsage } from './devices';
+import { getAlerts } from './alerts';
+import { startSimulator, broadcastState, simulatorEvents } from './simulator';
 
 dotenv.config();
 
@@ -13,128 +13,102 @@ const port = process.env.BACKEND_PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// Logger middleware
+// Log HTTP requests
 app.use((req, res, next) => {
   console.log(`[HTTP] ${req.method} ${req.path}`);
   next();
 });
 
 /**
- * REST: Get all devices
+ * REST: GET /devices -> Retrieve all devices
  */
-app.get('/api/devices', async (req, res) => {
+const handleGetDevices = async (req: express.Request, res: express.Response) => {
   try {
-    const devices = await prisma.device.findMany();
+    const devices = await getState();
     res.json(devices);
   } catch (err) {
-    console.error('Error fetching devices:', err);
+    console.error('Error in GET /devices:', err);
     res.status(500).json({ error: 'Failed to fetch devices' });
   }
-});
+};
+app.get('/devices', handleGetDevices);
+app.get('/api/devices', handleGetDevices);
 
 /**
- * REST: Get devices by room
+ * REST: GET /rooms/:room -> Retrieve devices filtered by room
  */
-app.get('/api/rooms/:room', async (req, res) => {
+const handleGetRoomDevices = async (req: express.Request, res: express.Response) => {
   const { room } = req.params;
   if (!['drawing', 'work1', 'work2'].includes(room)) {
-    return res.status(400).json({ error: 'Invalid room name. Choose drawing, work1, or work2' });
+    return res.status(400).json({ error: 'Invalid room. Choose drawing, work1, or work2.' });
   }
   try {
-    const devices = await prisma.device.findMany({ where: { room } });
-    res.json(devices);
+    const devices = await getState();
+    const filtered = devices.filter((d) => d.room === room);
+    res.json(filtered);
   } catch (err) {
-    console.error(`Error fetching devices for room ${room}:`, err);
+    console.error(`Error in GET /rooms/${room}:`, err);
     res.status(500).json({ error: 'Failed to fetch room devices' });
   }
-});
+};
+app.get('/rooms/:room', handleGetRoomDevices);
+app.get('/api/rooms/:room', handleGetRoomDevices);
 
 /**
- * REST: Get active energy usage summary
+ * REST: GET /usage -> Get total and per-room active wattage load
  */
-app.get('/api/usage', async (req, res) => {
+const handleGetUsage = async (req: express.Request, res: express.Response) => {
   try {
-    const devices = await prisma.device.findMany();
-    const totalWatts = devices.reduce((sum, d) => sum + d.powerDraw, 0);
-    
-    const perRoom = {
-      drawing: devices.filter(d => d.room === 'drawing').reduce((sum, d) => sum + d.powerDraw, 0),
-      work1: devices.filter(d => d.room === 'work1').reduce((sum, d) => sum + d.powerDraw, 0),
-      work2: devices.filter(d => d.room === 'work2').reduce((sum, d) => sum + d.powerDraw, 0),
-    };
-
-    res.json({ totalWatts, perRoom });
+    const usage = await getUsage();
+    res.json(usage);
   } catch (err) {
-    console.error('Error computing energy usage:', err);
-    res.status(500).json({ error: 'Failed to compute usage' });
+    console.error('Error in GET /usage:', err);
+    res.status(500).json({ error: 'Failed to compute usage metrics' });
   }
-});
+};
+app.get('/usage', handleGetUsage);
+app.get('/api/usage', handleGetUsage);
 
 /**
- * REST: Get current computed alerts
+ * REST: GET /alerts -> Recompute and get active alerts
  */
-app.get('/api/alerts', async (req, res) => {
+const handleGetAlerts = async (req: express.Request, res: express.Response) => {
   try {
-    const devices = await prisma.device.findMany();
-    const activeAlerts = computeAlerts(devices);
-    res.json(activeAlerts);
+    const alerts = await getAlerts();
+    res.json(alerts);
   } catch (err) {
-    console.error('Error computing alerts:', err);
-    res.status(500).json({ error: 'Failed to compute alerts' });
+    console.error('Error in GET /alerts:', err);
+    res.status(500).json({ error: 'Failed to evaluate alert conditions' });
   }
-});
+};
+app.get('/alerts', handleGetAlerts);
+app.get('/api/alerts', handleGetAlerts);
 
 /**
- * REST: Manual toggle device status
+ * REST: POST /devices/:id/toggle -> Manually toggle a device
  */
-app.post('/api/devices/:id/toggle', async (req, res) => {
+const handleToggleDevice = async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
   try {
-    const device = await prisma.device.findUnique({ where: { id } });
-    if (!device) {
-      return res.status(404).json({ error: 'Device not found' });
-    }
-
-    const nextStatus = device.status === 'on' ? 'off' : 'on';
-    let nextPower = 0;
-    if (nextStatus === 'on') {
-      nextPower = device.type === 'fan' ? 60 : 15;
-    }
-
-    const updatedDevice = await prisma.device.update({
-      where: { id },
-      data: {
-        status: nextStatus,
-        powerDraw: nextPower,
-        lastChanged: new Date(),
-      },
-    });
-
-    console.log(`[API] Manually toggled device ${id} to ${nextStatus} (${nextPower}W)`);
-
-    // Fetch fresh states to notify
-    const freshDevices = await prisma.device.findMany();
-
-    // Trigger alerts checks (sends webhook if a new alert condition arises)
-    processAlertNotifications(freshDevices).catch((err) => {
-      console.error('[API] Error processing alerts:', err);
-    });
-
-    // Broadcast update to all SSE subscribers
-    simulatorEvents.emit('change', freshDevices);
-
+    const updatedDevice = await toggleDevice(id);
+    console.log(`[API] Manually toggled ${id} to ${updatedDevice.status}`);
+    
+    // Broadcast updated state to all connected SSE clients instantly
+    await broadcastState();
+    
     res.json(updatedDevice);
-  } catch (err) {
-    console.error(`Error toggling device ${id}:`, err);
-    res.status(500).json({ error: 'Failed to toggle device' });
+  } catch (err: any) {
+    console.error(`Error in POST /devices/${id}/toggle:`, err);
+    res.status(404).json({ error: err.message || 'Failed to toggle device' });
   }
-});
+};
+app.post('/devices/:id/toggle', handleToggleDevice);
+app.post('/api/devices/:id/toggle', handleToggleDevice);
 
 /**
- * SSE: Stream real-time device updates and alerts
+ * SSE: GET /stream -> Stream device status and alerts in real-time
  */
-app.get('/api/stream', async (req, res) => {
-  // Set headers for Server-Sent Events (SSE)
+const handleSseStream = async (req: express.Request, res: express.Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
@@ -142,27 +116,27 @@ app.get('/api/stream', async (req, res) => {
     'Access-Control-Allow-Origin': '*',
   });
 
-  console.log('[SSE] Client connected to real-time event stream.');
+  console.log('[SSE] Connection opened.');
 
-  // Helper to package and send data
-  const sendUpdate = (devicesList: any[]) => {
-    const alertsList = computeAlerts(devicesList);
-    const data = JSON.stringify({ devices: devicesList, alerts: alertsList });
-    res.write(`data: ${data}\n\n`);
+  // Push helper
+  const sendUpdate = (payload: any) => {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
 
-  // 1. Send initial state immediately
+  // 1. Send initial state payload immediately on connection
   try {
-    const initialDevices = await prisma.device.findMany();
-    sendUpdate(initialDevices);
+    const devices = await getState();
+    const usage = await getUsage();
+    const alerts = await getAlerts();
+    sendUpdate({ devices, usage, alerts });
   } catch (err) {
-    console.error('[SSE] Error sending initial state:', err);
+    console.error('[SSE] Error sending initial connection payload:', err);
   }
 
-  // 2. Subscribe to change events
-  const onChange = (freshDevices: any[]) => {
+  // 2. Subscribe to simulator state updates
+  const onChange = (payload: any) => {
     try {
-      sendUpdate(freshDevices);
+      sendUpdate(payload);
     } catch (err) {
       console.error('[SSE] Error writing stream updates:', err);
     }
@@ -170,20 +144,21 @@ app.get('/api/stream', async (req, res) => {
 
   simulatorEvents.on('change', onChange);
 
-  // 3. Handle connection close
+  // 3. Close listener on disconnect
   req.on('close', () => {
-    console.log('[SSE] Client disconnected.');
+    console.log('[SSE] Connection closed.');
     simulatorEvents.off('change', onChange);
   });
-});
+};
+app.get('/stream', handleSseStream);
+app.get('/api/stream', handleSseStream);
 
-// Start Express server and Simulator
+// Start Express server and simulation loop
 app.listen(port, () => {
   console.log(`===============================================`);
-  console.log(`   THE BIG BOSS IDEA BACKEND SERVER RUNNING    `);
+  console.log(`   THE BIG BOSS IDEA BACKEND ENERGY RUNNING   `);
   console.log(`   URL: http://localhost:${port}               `);
   console.log(`===============================================`);
   
-  // Start simulation loop
   startSimulator();
 });

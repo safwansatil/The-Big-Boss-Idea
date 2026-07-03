@@ -3,13 +3,15 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('Seeding devices...');
-
-  // Clear existing devices
+  console.log('Clearing database tables...');
+  await prisma.alertLog.deleteMany({});
   await prisma.device.deleteMany({});
 
-  const devices = [
-    // Drawing Room (drawing)
+  console.log('Seeding 15 office devices with randomized past timestamps...');
+
+  // 15 devices: 3 rooms (drawing, work1, work2), 5 devices per room (2 fans, 3 lights)
+  const initialDevices = [
+    // Drawing Room (drawing) - Lounge
     { id: 'drawing-fan-1', name: 'Drawing Room Fan 1', type: 'fan', room: 'drawing', status: 'off', powerDraw: 0 },
     { id: 'drawing-fan-2', name: 'Drawing Room Fan 2', type: 'fan', room: 'drawing', status: 'on', powerDraw: 60 },
     { id: 'drawing-light-1', name: 'Drawing Room Light 1', type: 'light', room: 'drawing', status: 'off', powerDraw: 0 },
@@ -31,21 +33,30 @@ async function main() {
     { id: 'work2-light-3', name: 'Work Room 2 Light 3', type: 'light', room: 'work2', status: 'off', powerDraw: 0 },
   ];
 
-  for (const device of devices) {
+  for (const dev of initialDevices) {
+    // Generate a random offset between 0 and 4 hours in the past
+    const offsetMs = Math.floor(Math.random() * 4 * 60 * 60 * 1000);
+    const lastChangedTime = new Date(Date.now() - offsetMs);
+
     await prisma.device.create({
       data: {
-        ...device,
-        lastChanged: new Date(),
+        id: dev.id,
+        name: dev.name,
+        type: dev.type,
+        room: dev.room,
+        status: dev.status,
+        powerDraw: dev.powerDraw,
+        lastChanged: lastChangedTime,
       },
     });
   }
 
-  console.log(`Successfully seeded ${devices.length} devices.`);
+  console.log('Seed completed successfully. 15 devices created.');
 }
 
 main()
   .catch((e) => {
-    console.error('Error during seeding:', e);
+    console.error('Error seeding DB:', e);
     process.exit(1);
   })
   .finally(async () => {
