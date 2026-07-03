@@ -1,0 +1,264 @@
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&family=Nunito:wght@400;600;700&display=swap');
+
+/* Dynamic Theme Configurations */
+body.day-mode {
+  --bg-color: #f6efe2;          /* Soft warm parchment cream */
+  --bg-panel: #fffefa;          /* Light eggshell panel background */
+  --wood-border: #5c4033;       /* Warm timber brown */
+  --wood-shadow: #3b281f;       /* Darker wood shadow */
+  --text-main: #362215;         /* Deep wood ink */
+  --text-muted: #6e584a;        /* Soft dusty timber */
+  --well-bg: #eddcc4;           /* Light sandy wood floor / well */
+  
+  --primary-yellow: #f4b23f;    /* Warm sunlit amber */
+  --accent-teal: #4b8f72;       /* Forest sage green */
+  --alert-coral: #e27a60;       /* Cozy alert coral */
+  
+  --switch-bg-off: #d5c3b0;
+  --switch-bg-on: #6fa086;
+  --panel-shadow: rgba(59, 40, 31, 0.08);
+}
+
+body.night-mode {
+  --bg-color: #18192a;          /* Deep evening sky blue-purple */
+  --bg-panel: #24263f;          /* Cozy dark cabin blue */
+  --wood-border: #755543;       /* Illuminated warm timber */
+  --wood-shadow: #0f101a;       /* Deep obsidian shadows */
+  --text-main: #f3e9db;         /* Bright warm parchment */
+  --text-muted: #9594ad;        /* Soft night-sky dust */
+  --well-bg: #191a2e;           /* Deep dark floorboards */
+  
+  --primary-yellow: #ffcb05;    /* Vivid firefly gold */
+  --accent-teal: #50b2cf;       /* Saturated motion blue */
+  --alert-coral: #f4978e;       /* Glowing alert neon coral */
+  
+  --switch-bg-off: #373957;
+  --switch-bg-on: #549673;
+  --panel-shadow: rgba(15, 16, 26, 0.5);
+}
+
+/* Global resets & typography */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-main);
+  font-family: 'Nunito', sans-serif;
+  font-size: 1.1rem;
+  line-height: 1.5;
+  padding: 30px 20px;
+  transition: background-color 0.4s ease, color 0.3s ease;
+  
+  /* Subtle cross-stitch/grain background pattern */
+  background-image: 
+    radial-gradient(rgba(92, 64, 51, 0.04) 1.5px, transparent 0),
+    radial-gradient(rgba(92, 64, 51, 0.04) 1.5px, transparent 0);
+  background-size: 20px 20px;
+  background-position: 0 0, 10px 10px;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Press Start 2P', monospace;
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Cozy wooden signboard / garden plot panel */
+.pixel-card {
+  background-color: var(--bg-panel);
+  border: 4px solid var(--wood-border);
+  box-shadow: 0 6px 0px var(--wood-shadow), 0 12px 24px var(--panel-shadow);
+  border-radius: 12px;
+  padding: 24px;
+  position: relative;
+  transition: all 0.3s ease;
+}
+
+/* Sunk in wooden floorboards / well */
+.pixel-well {
+  background-color: var(--well-bg);
+  border: 3px solid var(--wood-border);
+  box-shadow: inset 2px 2px 8px rgba(0, 0, 0, 0.12);
+  border-radius: 8px;
+  padding: 16px;
+  transition: background-color 0.3s ease;
+}
+
+/* Cozy retro buttons */
+.pixel-btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 0.65rem;
+  font-weight: bold;
+  background-color: #f7d070;
+  border: 3px solid var(--wood-border);
+  box-shadow: 0 4px 0px var(--wood-shadow);
+  color: #3b281f;
+  padding: 6px 14px;
+  cursor: pointer;
+  outline: none;
+  border-radius: 6px;
+  transition: all 0.08s ease;
+  user-select: none;
+}
+
+.pixel-btn:hover {
+  background-color: #ffd885;
+}
+
+.pixel-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0px var(--wood-shadow);
+}
+
+.pixel-btn.btn-danger {
+  background-color: var(--alert-coral);
+  color: #ffffff;
+}
+.pixel-btn.btn-danger:hover {
+  background-color: #f28482;
+}
+
+.pixel-btn.btn-success {
+  background-color: var(--accent-teal);
+  color: #ffffff;
+}
+.pixel-btn.btn-success:hover {
+  background-color: #52b2cf;
+}
+
+/* Ambient glows */
+.glow-wrapper {
+  position: relative;
+}
+
+/* Radial light bleed behind active devices */
+.glow-bleed-yellow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(255, 203, 5, 0.4) 0%, rgba(255, 203, 5, 0) 70%);
+  transition: background 0.3s ease;
+  z-index: 1;
+}
+
+body.night-mode .glow-bleed-yellow {
+  background: radial-gradient(circle, rgba(255, 218, 68, 0.6) 0%, rgba(255, 218, 68, 0) 75%);
+}
+
+.glow-bleed-teal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 70px;
+  height: 70px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(circle, rgba(82, 178, 207, 0.3) 0%, rgba(82, 178, 207, 0) 70%);
+  transition: background 0.3s ease;
+  z-index: 1;
+}
+
+body.night-mode .glow-bleed-teal {
+  background: radial-gradient(circle, rgba(82, 178, 207, 0.5) 0%, rgba(82, 178, 207, 0) 75%);
+}
+
+/* Sprite filter drop shadows */
+.animate-glow-bulb {
+  filter: drop-shadow(0 0 10px var(--primary-yellow));
+  z-index: 2;
+}
+
+body.night-mode .animate-glow-bulb {
+  filter: drop-shadow(0 0 16px var(--primary-yellow)) drop-shadow(0 0 4px rgba(255, 203, 5, 0.7));
+}
+
+.animate-glow-fan {
+  filter: drop-shadow(0 0 8px var(--accent-teal));
+  z-index: 2;
+}
+
+body.night-mode .animate-glow-fan {
+  filter: drop-shadow(0 0 14px var(--accent-teal)) drop-shadow(0 0 3px rgba(82, 178, 207, 0.6));
+}
+
+/* Fan rotation physics (faster spin + Origin centered) */
+@keyframes spinBlades {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-blades {
+  animation: spinBlades 0.4s linear infinite;
+  transform-origin: 16px 16px;
+}
+
+/* Layout container styling */
+.grid-container {
+  display: grid;
+  grid-template-columns: 7fr 4fr;
+  gap: 24px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+@media (max-width: 960px) {
+  .grid-container {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Settings Override Widget in Top Corner */
+.theme-switch-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background-color: var(--well-bg);
+  border: 2px solid var(--wood-border);
+  padding: 6px 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+  transition: background-color 0.3s ease;
+}
+
+.theme-switch-icon {
+  font-size: 1.3rem;
+  transition: transform 0.3s ease;
+}
+
+.theme-switch-container:hover .theme-switch-icon {
+  transform: rotate(15deg) scale(1.1);
+}
+
+/* Custom retro scrollbars */
+::-webkit-scrollbar {
+  width: 14px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-color);
+  border-left: 3px solid var(--wood-border);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--wood-border);
+  border: 3px solid var(--bg-color);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--wood-shadow);
+}

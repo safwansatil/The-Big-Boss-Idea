@@ -1,0 +1,18 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Device {
+  id          String   @id
+  name        String
+  type        String // "fan" | "light"
+  room        String // "drawing" | "work1" | "work2"
+  status      String // "on" | "off"
+  powerDraw   Int      // Watts (Fan: 60W when on, Light: 15W when on, 0W when off)
+  lastChanged DateTime @default(now())
+}
