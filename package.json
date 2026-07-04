@@ -1,0 +1,10 @@
+{
+  "name": "big-boss-idea",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "bot",
+    "packages/*"
+  ]
+}

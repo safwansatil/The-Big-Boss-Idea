@@ -1,189 +1,266 @@
+import './loadEnv';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { prisma } from './db';
-import { startSimulator, simulatorEvents } from './simulator';
-import { computeAlerts, processAlertNotifications } from './alerts';
-
-dotenv.config();
+import { getState, toggleDevice, getUsage } from './devices';
+import { getAlerts } from './alerts';
+import { startSimulator, broadcastState, simulatorEvents } from './simulator';
+import { logger, httpLogger } from './logger';
+import { getStuckOnThresholdMs, setStuckOnThresholdMs, validateConfig } from './config';
+import rateLimit from 'express-rate-limit';
+import { getLeaderboard } from './leaderboard';
 
 const app = express();
 const port = process.env.BACKEND_PORT || 5000;
 
-app.use(cors());
-app.use(express.json());
+validateConfig();
 
-// Logger middleware
-app.use((req, res, next) => {
-  console.log(`[HTTP] ${req.method} ${req.path}`);
-  next();
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map((o) => o.trim()).filter(Boolean)
+  : ['*'];
+
+const corsOptions: cors.CorsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes('*')) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error('Not allowed by CORS'));
+  },
+};
+
+app.use(cors(corsOptions));
+app.use(express.json());
+app.use(httpLogger);
+
+const VALID_DEVICE_IDS = [
+  'drawing-fan-1', 'drawing-fan-2', 'drawing-light-1', 'drawing-light-2', 'drawing-light-3',
+  'work1-fan-1', 'work1-fan-2', 'work1-light-1', 'work1-light-2', 'work1-light-3',
+  'work2-fan-1', 'work2-fan-2', 'work2-light-1', 'work2-light-2', 'work2-light-3',
+];
+
+// --- Rate limiters ---
+const alertsLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many alert requests, please try again later.' },
 });
 
-/**
- * REST: Get all devices
- */
-app.get('/api/devices', async (req, res) => {
+const usageLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many usage requests, please try again later.' },
+});
+
+const toggleLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many toggle requests, please try again later.' },
+});
+
+const configLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many config requests, please try again later.' },
+});
+
+// --- Health ---
+const handleHealthCheck = async (_req: express.Request, res: express.Response) => {
   try {
-    const devices = await prisma.device.findMany();
+    await prisma.$queryRaw`SELECT 1`;
+    res.status(200).json({
+      status: 'healthy',
+      database: 'connected',
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    logger.error({ err }, '[Health] DB Connection check failed');
+    res.status(500).json({
+      status: 'unhealthy',
+      database: 'disconnected',
+      error: err.message || String(err),
+      timestamp: new Date().toISOString(),
+    });
+  }
+};
+app.get('/health', handleHealthCheck);
+app.get('/api/health', handleHealthCheck);
+
+// --- Devices ---
+const handleGetDevices = async (_req: express.Request, res: express.Response) => {
+  try {
+    const devices = await getState();
     res.json(devices);
   } catch (err) {
-    console.error('Error fetching devices:', err);
+    logger.error({ err }, 'Error in GET /devices');
     res.status(500).json({ error: 'Failed to fetch devices' });
   }
-});
+};
+app.get('/devices', usageLimiter, handleGetDevices);
+app.get('/api/devices', usageLimiter, handleGetDevices);
 
-/**
- * REST: Get devices by room
- */
-app.get('/api/rooms/:room', async (req, res) => {
+const handleGetRoomDevices = async (req: express.Request, res: express.Response) => {
   const { room } = req.params;
   if (!['drawing', 'work1', 'work2'].includes(room)) {
-    return res.status(400).json({ error: 'Invalid room name. Choose drawing, work1, or work2' });
+    return res.status(400).json({ error: 'Invalid room. Choose drawing, work1, or work2.' });
   }
   try {
-    const devices = await prisma.device.findMany({ where: { room } });
-    res.json(devices);
+    const devices = await getState();
+    res.json(devices.filter((d) => d.room === room));
   } catch (err) {
-    console.error(`Error fetching devices for room ${room}:`, err);
+    logger.error({ err }, `Error in GET /rooms/${room}`);
     res.status(500).json({ error: 'Failed to fetch room devices' });
   }
-});
+};
+app.get('/rooms/:room', usageLimiter, handleGetRoomDevices);
+app.get('/api/rooms/:room', usageLimiter, handleGetRoomDevices);
 
-/**
- * REST: Get active energy usage summary
- */
-app.get('/api/usage', async (req, res) => {
+// --- Usage ---
+const handleGetUsage = async (_req: express.Request, res: express.Response) => {
   try {
-    const devices = await prisma.device.findMany();
-    const totalWatts = devices.reduce((sum, d) => sum + d.powerDraw, 0);
-    
-    const perRoom = {
-      drawing: devices.filter(d => d.room === 'drawing').reduce((sum, d) => sum + d.powerDraw, 0),
-      work1: devices.filter(d => d.room === 'work1').reduce((sum, d) => sum + d.powerDraw, 0),
-      work2: devices.filter(d => d.room === 'work2').reduce((sum, d) => sum + d.powerDraw, 0),
-    };
-
-    res.json({ totalWatts, perRoom });
+    const usage = await getUsage();
+    res.json(usage);
   } catch (err) {
-    console.error('Error computing energy usage:', err);
-    res.status(500).json({ error: 'Failed to compute usage' });
+    logger.error({ err }, 'Error in GET /usage');
+    res.status(500).json({ error: 'Failed to compute usage metrics' });
   }
-});
+};
+app.get('/usage', usageLimiter, handleGetUsage);
+app.get('/api/usage', usageLimiter, handleGetUsage);
 
-/**
- * REST: Get current computed alerts
- */
-app.get('/api/alerts', async (req, res) => {
+// --- Alerts ---
+const handleGetAlerts = async (_req: express.Request, res: express.Response) => {
   try {
-    const devices = await prisma.device.findMany();
-    const activeAlerts = computeAlerts(devices);
-    res.json(activeAlerts);
+    const alerts = await getAlerts();
+    res.json(alerts);
   } catch (err) {
-    console.error('Error computing alerts:', err);
-    res.status(500).json({ error: 'Failed to compute alerts' });
+    logger.error({ err }, 'Error in GET /alerts');
+    res.status(500).json({ error: 'Failed to evaluate alert conditions' });
   }
-});
+};
+app.get('/alerts', alertsLimiter, handleGetAlerts);
+app.get('/api/alerts', alertsLimiter, handleGetAlerts);
 
-/**
- * REST: Manual toggle device status
- */
-app.post('/api/devices/:id/toggle', async (req, res) => {
+// --- Leaderboard ---
+const handleGetLeaderboard = async (_req: express.Request, res: express.Response) => {
+  try {
+    const result = await getLeaderboard();
+    res.json(result);
+  } catch (err) {
+    logger.error({ err }, 'Error in GET /leaderboard');
+    res.status(500).json({ error: 'Failed to compute leaderboard' });
+  }
+};
+app.get('/leaderboard', handleGetLeaderboard);
+app.get('/api/leaderboard', handleGetLeaderboard);
+
+// --- Toggle ---
+const handleToggleDevice = async (req: express.Request, res: express.Response) => {
   const { id } = req.params;
-  try {
-    const device = await prisma.device.findUnique({ where: { id } });
-    if (!device) {
-      return res.status(404).json({ error: 'Device not found' });
-    }
 
-    const nextStatus = device.status === 'on' ? 'off' : 'on';
-    let nextPower = 0;
-    if (nextStatus === 'on') {
-      nextPower = device.type === 'fan' ? 60 : 15;
-    }
-
-    const updatedDevice = await prisma.device.update({
-      where: { id },
-      data: {
-        status: nextStatus,
-        powerDraw: nextPower,
-        lastChanged: new Date(),
-      },
-    });
-
-    console.log(`[API] Manually toggled device ${id} to ${nextStatus} (${nextPower}W)`);
-
-    // Fetch fresh states to notify
-    const freshDevices = await prisma.device.findMany();
-
-    // Trigger alerts checks (sends webhook if a new alert condition arises)
-    processAlertNotifications(freshDevices).catch((err) => {
-      console.error('[API] Error processing alerts:', err);
-    });
-
-    // Broadcast update to all SSE subscribers
-    simulatorEvents.emit('change', freshDevices);
-
-    res.json(updatedDevice);
-  } catch (err) {
-    console.error(`Error toggling device ${id}:`, err);
-    res.status(500).json({ error: 'Failed to toggle device' });
+  if (!VALID_DEVICE_IDS.includes(id)) {
+    return res.status(400).json({ error: `Invalid device ID '${id}'. Expected one of: ${VALID_DEVICE_IDS.join(', ')}` });
   }
-});
 
-/**
- * SSE: Stream real-time device updates and alerts
- */
-app.get('/api/stream', async (req, res) => {
-  // Set headers for Server-Sent Events (SSE)
+  try {
+    const prev = await prisma.device.findUnique({ where: { id } });
+    if (!prev) throw new Error(`Device with ID ${id} not found.`);
+
+    const updatedDevice = await toggleDevice(id);
+    logger.info(`[API] Manually toggled ${id} to ${updatedDevice.status}`);
+
+    await broadcastState('manual');
+
+    res.json({
+      ...updatedDevice,
+      previousStatus: prev.status,
+      previousPower: prev.powerDraw,
+      wattsDelta: updatedDevice.powerDraw - prev.powerDraw,
+    });
+  } catch (err: any) {
+    logger.error({ err }, `Error in POST /devices/${id}/toggle`);
+    res.status(404).json({ error: err.message || 'Failed to toggle device' });
+  }
+};
+app.post('/devices/:id/toggle', toggleLimiter, handleToggleDevice);
+app.post('/api/devices/:id/toggle', toggleLimiter, handleToggleDevice);
+
+// --- Config ---
+const handleGetConfig = async (_req: express.Request, res: express.Response) => {
+  res.json({ stuckOnThresholdMs: getStuckOnThresholdMs() });
+};
+app.get('/config', handleGetConfig);
+app.get('/api/config', handleGetConfig);
+
+const handlePatchConfig = async (req: express.Request, res: express.Response) => {
+  try {
+    const body = req.body as { stuckOnThresholdMs?: number };
+    if (typeof body.stuckOnThresholdMs !== 'number') {
+      return res.status(400).json({ error: 'stuckOnThresholdMs must be a positive number.' });
+    }
+
+    setStuckOnThresholdMs(body.stuckOnThresholdMs);
+    logger.info('[API] Updated stuckOnThresholdMs', body.stuckOnThresholdMs);
+
+    res.json({ stuckOnThresholdMs: getStuckOnThresholdMs() });
+  } catch (err: any) {
+    logger.error({ err }, 'Error in PATCH /config');
+    res.status(400).json({ error: err.message || 'Invalid config' });
+  }
+};
+app.patch('/config', configLimiter, handlePatchConfig);
+app.patch('/api/config', configLimiter, handlePatchConfig);
+
+// --- SSE ---
+const handleSseStream = async (req: express.Request, res: express.Response) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': allowedOrigins.includes('*') ? '*' : String(allowedOrigins[0] ?? '*'),
   });
 
-  console.log('[SSE] Client connected to real-time event stream.');
+  logger.info('[SSE] Connection opened.');
 
-  // Helper to package and send data
-  const sendUpdate = (devicesList: any[]) => {
-    const alertsList = computeAlerts(devicesList);
-    const data = JSON.stringify({ devices: devicesList, alerts: alertsList });
-    res.write(`data: ${data}\n\n`);
+  const sendUpdate = (payload: any) => {
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
 
-  // 1. Send initial state immediately
   try {
-    const initialDevices = await prisma.device.findMany();
-    sendUpdate(initialDevices);
+    const devices = await getState();
+    const usage = await getUsage();
+    const alerts = await getAlerts();
+    sendUpdate({ devices, usage, alerts });
   } catch (err) {
-    console.error('[SSE] Error sending initial state:', err);
+    logger.error({ err }, '[SSE] Error sending initial connection payload');
   }
 
-  // 2. Subscribe to change events
-  const onChange = (freshDevices: any[]) => {
+  const onChange = (payload: any) => {
     try {
-      sendUpdate(freshDevices);
+      sendUpdate(payload);
     } catch (err) {
-      console.error('[SSE] Error writing stream updates:', err);
+      logger.error({ err }, '[SSE] Error writing stream updates');
     }
   };
 
   simulatorEvents.on('change', onChange);
 
-  // 3. Handle connection close
   req.on('close', () => {
-    console.log('[SSE] Client disconnected.');
+    logger.info('[SSE] Connection closed.');
     simulatorEvents.off('change', onChange);
   });
-});
+};
+app.get('/stream', handleSseStream);
+app.get('/api/stream', handleSseStream);
 
-// Start Express server and Simulator
+// --- Boot ---
 app.listen(port, () => {
-  console.log(`===============================================`);
-  console.log(`   THE BIG BOSS IDEA BACKEND SERVER RUNNING    `);
-  console.log(`   URL: http://localhost:${port}               `);
-  console.log(`===============================================`);
-  
-  // Start simulation loop
+  logger.info(`Backend running on port ${port}`);
   startSimulator();
 });
