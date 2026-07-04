@@ -1,8 +1,6 @@
+import './loadEnv'; // Must be first import to load root .env before others resolve
 import { Client, GatewayIntentBits, Message } from 'discord.js';
-import dotenv from 'dotenv';
 import { generateReply } from './ai';
-
-dotenv.config();
 
 const token = process.env.DISCORD_BOT_TOKEN;
 const backendPort = process.env.BACKEND_PORT || 5000;

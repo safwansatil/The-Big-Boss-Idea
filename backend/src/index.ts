@@ -1,12 +1,10 @@
+import './loadEnv'; // Must be first import to load root .env before others resolve
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { prisma } from './db';
 import { getState, toggleDevice, getUsage } from './devices';
 import { getAlerts } from './alerts';
 import { startSimulator, broadcastState, simulatorEvents } from './simulator';
-
-dotenv.config();
 
 const app = express();
 const port = process.env.BACKEND_PORT || 5000;

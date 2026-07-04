@@ -1,3 +1,23 @@
+import path from 'path';
+import fs from 'fs';
+import dotenv from 'dotenv';
+
+// Climb up directory tree to find root .env and load it
+let currentDir = __dirname;
+let loaded = false;
+while (currentDir !== path.parse(currentDir).root) {
+  const envPath = path.join(currentDir, '.env');
+  if (fs.existsSync(envPath)) {
+    dotenv.config({ path: envPath });
+    loaded = true;
+    break;
+  }
+  currentDir = path.dirname(currentDir);
+}
+if (!loaded) {
+  console.warn('[Seed] Warning: Root .env file was not found.');
+}
+
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
