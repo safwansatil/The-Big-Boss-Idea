@@ -175,7 +175,7 @@ const handleToggleDevice = async (req: express.Request, res: express.Response) =
     const updatedDevice = await toggleDevice(id);
     logger.info(`[API] Manually toggled ${id} to ${updatedDevice.status}`);
 
-    await broadcastState();
+    await broadcastState('manual');
 
     res.json({
       ...updatedDevice,

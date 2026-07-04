@@ -14,6 +14,7 @@ const backendPort = process.env.BACKEND_PORT || 5000;
 const backendUrl = `http://localhost:${backendPort}`;
 const voiceChannelId = process.env.VOICE_CHANNEL_ID || '';
 const alertChannelId = process.env.DISCORD_ALLOWED_CHANNEL_ID || '';
+const deviceLogChannelId = process.env.DISCORD_DEVICE_LOG_CHANNEL_ID || '';
 
 if (!token) {
   logger.error('[Bot] Error: DISCORD_BOT_TOKEN is not defined in the environment.');
@@ -29,6 +30,7 @@ const client = new Client({
 });
 
 const postedAlertKeys = new Set<string>();
+const prevDeviceLogMap = new Map<string, { status: string; room: string; name: string }>();
 
 function getAlertKey(alert: Alert): string {
   const sortedIds = [...(alert.deviceIds || [])].sort();
@@ -78,7 +80,7 @@ client.once('ready', () => {
   logger.info(`Bot online as ${client.user?.tag}`);
 
   const sse = new SSEClient(`${backendUrl}/api/stream`);
-  sse.onUpdate(() => {
+  sse.onUpdate((payload) => {
     if (voiceChannelId && state.usage) {
       updateVoiceChannelName(client, voiceChannelId, state.usage.totalWatts).catch((err) => {
         logger.warn({ err }, '[Voice] Failed to update channel on SSE tick');
@@ -92,6 +94,38 @@ client.once('ready', () => {
         });
       }
       syncPostedAlerts(state.alerts);
+    }
+
+    if (deviceLogChannelId && payload.devices) {
+      const source = (payload as any).source || 'simulator';
+      const changed: any[] = [];
+
+      for (const dev of payload.devices) {
+        const prev = prevDeviceLogMap.get(dev.id);
+        if (!prev || prev.status !== dev.status) {
+          changed.push({ ...dev, source });
+        }
+        prevDeviceLogMap.set(dev.id, { status: dev.status, room: dev.room, name: dev.name });
+      }
+
+      if (changed.length > 0) {
+        const channel = client.channels.cache.get(deviceLogChannelId);
+        if (channel && 'send' in channel) {
+          const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+          const formatted = changed
+            .map((dev) => {
+              const roomName = getRoomDisplayName(dev.room);
+              const statusText = dev.status === 'on' ? 'ON' : 'OFF';
+              const ts = new Date(dev.lastChanged).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+              return `[${ts}] · ${roomName} · ${dev.name} · ${statusText} · ${source}`;
+            })
+            .join('\n');
+
+          channel.send({ content: `📊 LIVE DEVICE LOG\n\`\`\`\n${formatted}\n\`\`\`` }).catch((err) => {
+            logger.error({ err }, '[DeviceLog] Failed to send live device log');
+          });
+        }
+      }
     }
   });
   sse.start();

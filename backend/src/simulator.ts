@@ -85,13 +85,13 @@ async function tick() {
     }
   }
 
-  await broadcastState();
+  await broadcastState('simulator');
 }
 
-export async function broadcastState() {
+export async function broadcastState(source?: string) {
   const devices = await getState();
   const usage = await getUsage();
   const alerts = await getAlerts();
 
-  simulatorEvents.emit('change', { devices, usage, alerts });
+  simulatorEvents.emit('change', { devices, usage, alerts, source });
 }

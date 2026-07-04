@@ -19,6 +19,13 @@ function getAiCacheKey(alert: Alert): string {
   return `${alert.type}:${alert.room}:${sortedIds.join(',')}`;
 }
 
+const recentlyNotifiedKeys = new Map<string, number>();
+
+function getNotifiedKey(alert: Alert): string {
+  const sorted = [...alert.deviceIds].sort();
+  return `${alert.type}:${alert.room}:${sorted.join(',')}`;
+}
+
 export async function getAlerts(): Promise<Alert[]> {
   const devices = await prisma.device.findMany();
   const now = new Date();
@@ -100,39 +107,59 @@ async function syncAlertLogs(activeAlerts: Alert[], allDevices: any[]) {
           .map((d) => ({ name: d.name })),
       };
 
-      const cacheKey = getAiCacheKey(alert);
-      const cached = aiMessageCache.get(cacheKey);
+      const notifyKey = getNotifiedKey(alert);
+      const lastNotifiedAt = recentlyNotifiedKeys.get(notifyKey);
       let aiMessage: string | undefined;
 
-      if (cached && cached.expiresAt > Date.now()) {
-        aiMessage = cached.message;
+      if (lastNotifiedAt && Date.now() - lastNotifiedAt < 5 * 60 * 1000) {
+        await prisma.alertLog.create({
+          data: {
+            type: alert.type,
+            room: alert.room,
+            deviceIds: sortedDeviceIds,
+            message: alert.message,
+            aiMessage: aiMessage ?? null,
+            timestamp: alert.timestamp,
+            resolved: false,
+          },
+        });
+        logger.info(`[AlertLog] Suppressed repeat webhook for ${alert.type} in ${alert.room}`);
       } else {
-        try {
-          const systemPrompt =
-            'You are the office energy monitoring system. Alert the boss/team on Discord about an anomalous energy event. Keep the message highly conversational, friendly, slightly opinionated about energy wastage. Use a Nintendo/Stardew Valley retro feel, employ emojis, and be clear about which room and devices are causing the alert. Do NOT exceed 3 sentences.';
-          aiMessage = await generateReply(systemPrompt, aiPromptPayload);
-          aiMessageCache.set(cacheKey, { message: aiMessage, expiresAt: Date.now() + AI_CACHE_TTL_MS });
-        } catch (err) {
-          logger.error({ err }, '[Alerts] Failed to generate AI message');
+        const cacheKey = getAiCacheKey(alert);
+        const cached = aiMessageCache.get(cacheKey);
+
+        if (cached && cached.expiresAt > Date.now()) {
+          aiMessage = cached.message;
+        } else {
+          try {
+            const systemPrompt =
+              'You are the office energy monitoring system. Alert the boss/team on Discord about an anomalous energy event. Keep the message highly conversational, friendly, slightly opinionated about energy wastage. Use a Nintendo/Stardew Valley retro feel, employ emojis, and be clear about which room and devices are causing the alert. Do NOT exceed 3 sentences.';
+            aiMessage = await generateReply(systemPrompt, aiPromptPayload);
+            aiMessageCache.set(cacheKey, { message: aiMessage, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+          } catch (err) {
+            logger.error({ err }, '[Alerts] Failed to generate AI message');
+          }
         }
+
+        await prisma.alertLog.create({
+          data: {
+            type: alert.type,
+            room: alert.room,
+            deviceIds: sortedDeviceIds,
+            message: alert.message,
+            aiMessage: aiMessage ?? null,
+            timestamp: alert.timestamp,
+            resolved: false,
+          },
+        });
+        logger.info(`[AlertLog] Fired and saved new active alert: ${alert.type} in ${alert.room}`);
+
+        triggerDiscordWebhook(alert, allDevices, aiMessage).catch((err) => {
+          logger.error({ err }, '[Alerts] Error sending webhook notify');
+        });
+
+        recentlyNotifiedKeys.set(notifyKey, Date.now());
       }
-
-      await prisma.alertLog.create({
-        data: {
-          type: alert.type,
-          room: alert.room,
-          deviceIds: sortedDeviceIds,
-          message: alert.message,
-          aiMessage: aiMessage ?? null,
-          timestamp: alert.timestamp,
-          resolved: false,
-        },
-      });
-      logger.info(`[AlertLog] Fired and saved new active alert: ${alert.type} in ${alert.room}`);
-
-      triggerDiscordWebhook(alert, allDevices, aiMessage).catch((err) => {
-        logger.error({ err }, '[Alerts] Error sending webhook notify');
-      });
     }
   }
 
@@ -141,12 +168,15 @@ async function syncAlertLogs(activeAlerts: Alert[], allDevices: any[]) {
     const sortedLogDeviceIds = [...logDeviceIds].sort();
 
     const stillActive = activeAlerts.some((alert) => {
-      if (alert.type !== log.type || alert.room !== log.room) return false;
+      if (alert.type !== log.type || log.room !== alert.room) return false;
       return alert.deviceIds.length === sortedLogDeviceIds.length &&
              [...alert.deviceIds].sort().every((id, idx) => id === sortedLogDeviceIds[idx]);
     });
 
     if (!stillActive) {
+      const notifyKey = `${log.type}:${log.room}:${sortedLogDeviceIds.join(',')}`;
+      recentlyNotifiedKeys.delete(notifyKey);
+
       await prisma.alertLog.update({
         where: { id: log.id },
         data: { resolved: true },
