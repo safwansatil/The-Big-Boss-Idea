@@ -14,7 +14,7 @@ out/
 
 # TypeScript / Node compile outputs
 dist/
-
+*.zip
 # Log files
 *.log
 npm-debug.log*

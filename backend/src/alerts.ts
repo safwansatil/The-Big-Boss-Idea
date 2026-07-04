@@ -135,7 +135,7 @@ async function syncAlertLogs(activeAlerts: Alert[], allDevices: any[]) {
             const systemPrompt =
               'You are the office energy monitoring system. Alert the boss/team on Discord about an anomalous energy event. Keep the message highly conversational, friendly, slightly opinionated about energy wastage. Use a Nintendo/Stardew Valley retro feel, employ emojis, and be clear about which room and devices are causing the alert. Do NOT exceed 3 sentences.';
             aiMessage = await generateReply(systemPrompt, aiPromptPayload);
-            aiMessageCache.set(cacheKey, { message: aiMessage, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+            aiMessageCache.set(cacheKey, { message: aiMessage || '', expiresAt: Date.now() + AI_CACHE_TTL_MS });
           } catch (err) {
             logger.error({ err }, '[Alerts] Failed to generate AI message');
           }
