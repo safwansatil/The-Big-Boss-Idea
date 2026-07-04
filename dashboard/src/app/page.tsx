@@ -391,7 +391,15 @@ export default function Dashboard() {
 
   // Live clock — only starts on client to prevent SSR hydration mismatch
   useEffect(() => {
-    setNow(new Date());
+    const d = new Date();
+    setNow(d);
+    
+    // Auto-detect based on local timezone clock: 9 AM - 5 PM is Day, else Night
+    const hour = d.getHours();
+    if (hour < 9 || hour >= 17) {
+      setIsNightMode(true);
+    }
+    
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
