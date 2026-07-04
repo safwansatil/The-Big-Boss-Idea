@@ -249,17 +249,29 @@ async function handlePrefixUsage(message: any) {
   const hoursElapsed = now.getHours() + now.getMinutes() / 60;
   const todayKwhEstimate = Number(((usage.totalWatts * hoursElapsed) / 1000).toFixed(2));
 
-  const systemPrompt =
-    'You are the friendly, opinionated AI energy assistant for "The Big Boss Idea" office. Interpret the current power draw and the estimated daily usage (kWh). Provide a playful, conversational response. If usage is high (e.g. > 200W), warn the boss. If it\'s low, congratulate the team. Keep it under 100 words. Use emojis.';
+  const lines = [
+    `**Total Load:** ${usage.totalWatts}W`,
+    `**Today's Estimated Usage:** ${todayKwhEstimate} kWh`,
+    `**Time of Check:** ${now.toLocaleTimeString()}`,
+    '',
+    `**Per Room:**`,
+    `• Drawing Room: ${usage.perRoom.drawing}W`,
+    `• Work Room 1: ${usage.perRoom.work1}W`,
+    `• Work Room 2: ${usage.perRoom.work2}W`,
+  ];
 
-  const aiMessage = await generateReply(systemPrompt, {
+  const systemPrompt =
+    'You are the friendly, opinionated AI energy assistant for "The Big Boss Idea" office. Provide a short, playful commentary on the current power stats shown below. If usage is high (e.g. > 200W), warn the boss. If it\'s low, congratulate the team. Keep it under 60 words. Use emojis. Do NOT repeat the raw numbers already shown.';
+
+  const aiCommentary = await generateReply(systemPrompt, {
     totalWatts: usage.totalWatts,
     perRoom: usage.perRoom,
     todayKwhEstimate,
     timeOfDay: now.toLocaleTimeString(),
   });
 
-  const embed = createEmbed('📊 Power Usage', aiMessage, COLORS.neutral);
+  const description = `${lines.join('\n')}\n\n${aiCommentary}`;
+  const embed = createEmbed('📊 Power Usage', description, COLORS.neutral);
   await message.reply({ embeds: [embed] });
 }
 

@@ -89,6 +89,8 @@ export async function handleSlashCommand(
 }
 
 async function handleStatus(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
   const devices = state.devices;
   const roomSummary: Record<string, { fansOn: number; lightsOn: number; totalDevices: number }> = {
     'Drawing Room': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
@@ -111,10 +113,11 @@ async function handleStatus(interaction: ChatInputCommandInteraction) {
   const aiMessage = await generateReply(systemPrompt, { rooms: roomSummary });
 
   const embed = createEmbed('⚡ Office Status', aiMessage, COLORS.neutral);
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleRoom(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
   const room = interaction.options.getString('name', true);
   const devices = state.devices.filter((d) => d.room === room);
 
@@ -143,13 +146,14 @@ async function handleRoom(interaction: ChatInputCommandInteraction) {
 
   const description = `${lines.join('\n')}\n\n${aiSummary}`;
   const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, description, COLORS.neutral);
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleUsage(interaction: ChatInputCommandInteraction) {
+  await interaction.deferReply({ ephemeral: true });
   const usage = state.usage;
   if (!usage) {
-    await interaction.reply({ content: '⚠️ Usage data not available yet. Try again in a moment.', ephemeral: true });
+    await interaction.editReply({ content: '⚠️ Usage data not available yet. Try again in a moment.' });
     return;
   }
 
@@ -157,18 +161,29 @@ async function handleUsage(interaction: ChatInputCommandInteraction) {
   const hoursElapsed = now.getHours() + now.getMinutes() / 60;
   const todayKwhEstimate = Number(((usage.totalWatts * hoursElapsed) / 1000).toFixed(2));
 
-  const systemPrompt =
-    'You are the friendly, opinionated AI energy assistant for "The Big Boss Idea" office. Interpret the current power draw and the estimated daily usage (kWh). Provide a playful, conversational response. If usage is high (e.g. > 200W), warn the boss. If it\'s low, congratulate the team. Keep it under 100 words.';
+  const lines = [
+    `**Total Load:** ${usage.totalWatts}W`,
+    `**Today's Estimated Usage:** ${todayKwhEstimate} kWh`,
+    `**Time of Check:** ${now.toLocaleTimeString()}`,
+    '',
+    `**Per Room:**`,
+    `• Drawing Room: ${usage.perRoom.drawing}W`,
+    `• Work Room 1: ${usage.perRoom.work1}W`,
+    `• Work Room 2: ${usage.perRoom.work2}W`,
+  ];
 
-  const aiMessage = await generateReply(systemPrompt, {
+  const systemPrompt =
+    'You are the friendly, opinionated AI energy assistant for "The Big Boss Idea" office. Provide a short, playful commentary on the current power stats shown below. If usage is high (e.g. > 200W), warn the boss. If it\'s low, congratulate the team. Keep it under 60 words. Use emojis. Do NOT repeat the raw numbers already shown.';
+
+  const aiCommentary = await generateReply(systemPrompt, {
     totalWatts: usage.totalWatts,
     perRoom: usage.perRoom,
     todayKwhEstimate,
     timeOfDay: now.toLocaleTimeString(),
   });
 
-  const embed = createEmbed('📊 Power Usage', aiMessage, COLORS.neutral);
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  const embed = createEmbed('📊 Power Usage', `${lines.join('\n')}\n\n${aiCommentary}`, COLORS.neutral);
+  await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleAsk(interaction: ChatInputCommandInteraction) {
@@ -187,6 +202,8 @@ async function handleAsk(interaction: ChatInputCommandInteraction) {
 }
 
 export async function handleModalSubmit(interaction: ModalSubmitInteraction) {
+  await interaction.deferReply({ ephemeral: true });
+
   if (interaction.customId !== 'ask-modal') return;
 
   const question = interaction.fields.getTextInputValue('question');
@@ -201,7 +218,7 @@ export async function handleModalSubmit(interaction: ModalSubmitInteraction) {
   });
 
   const embed = createEmbed('🤖 AI Response', aiMessage, COLORS.neutral);
-  await interaction.reply({ embeds: [embed], ephemeral: true });
+  await interaction.editReply({ embeds: [embed] });
 }
 
 async function handleLeaderboard(interaction: ChatInputCommandInteraction, backendUrl: string) {
@@ -348,6 +365,7 @@ export async function handleSelectToggle(
 }
 
 async function handlePredict(interaction: ChatInputCommandInteraction, backendUrl: string) {
+  await interaction.deferReply({ ephemeral: true });
   try {
     const [usageRes, alertsRes] = await Promise.all([
       fetch(`${backendUrl}/api/usage`).then((r) => r.json()),
@@ -365,8 +383,8 @@ async function handlePredict(interaction: ChatInputCommandInteraction, backendUr
     });
 
     const embed = createEmbed('🔮 EOD Prediction', aiText, COLORS.neutral);
-    await interaction.reply({ embeds: [embed], ephemeral: true });
+    await interaction.editReply({ embeds: [embed] });
   } catch {
-    await interaction.reply({ content: '⚠️ Failed to generate prediction.', ephemeral: true });
+    await interaction.editReply({ content: '⚠️ Failed to generate prediction.' });
   }
 }

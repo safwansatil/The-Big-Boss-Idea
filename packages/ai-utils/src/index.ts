@@ -4,6 +4,8 @@ import OpenAI from 'openai';
 const apiKey = process.env.AI_API_KEY || '';
 const provider = (process.env.AI_API_PROVIDER || 'gemini') as 'gemini' | 'openai';
 
+const AI_TIMEOUT_MS = 15000;
+
 export async function generateReply(systemPrompt: string, data: any): Promise<string> {
   if (!apiKey) {
     console.warn('[AI] AI_API_KEY not set. Using fallback text generator.');
@@ -11,32 +13,48 @@ export async function generateReply(systemPrompt: string, data: any): Promise<st
   }
 
   try {
-    if (provider === 'openai') {
-      const openai = new OpenAI({ apiKey });
-      const completion = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: JSON.stringify(data) },
-        ],
-        max_tokens: 200,
-      });
-      return completion.choices[0]?.message?.content?.trim() ?? generateFallback(systemPrompt, data);
-    }
+    let result: string | undefined;
+    const aiCall = (async () => {
+      if (provider === 'openai') {
+        const openai = new OpenAI({ apiKey });
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: JSON.stringify(data) },
+          ],
+          max_tokens: 200,
+        });
+        result = completion.choices[0]?.message?.content?.trim() ?? undefined;
+        if (result) return;
+      }
 
-    if (provider === 'gemini') {
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
-        systemInstruction: systemPrompt,
-      });
-      const prompt = `Translate this JSON data into a natural, conversational message based on your personality: ${JSON.stringify(data, null, 2)}`;
-      const result = await model.generateContent(prompt);
-      return result.response.text().trim();
-    }
+      if (provider === 'gemini') {
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({
+          model: 'gemini-2.0-flash',
+          systemInstruction: systemPrompt,
+        });
+        const prompt = `Translate this JSON data into a natural, conversational message based on your personality: ${JSON.stringify(data, null, 2)}`;
+        const genResult = await model.generateContent(prompt);
+        result = genResult.response.text().trim();
+        if (result) return;
+      }
 
-    console.warn(`[AI] Provider "${provider}" is not fully implemented. Using fallback.`);
-    return generateFallback(systemPrompt, data);
+      console.warn(`[AI] Provider "${provider}" is not fully implemented. Using fallback.`);
+      result = undefined;
+    })();
+
+    await Promise.race([
+      aiCall,
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`AI request timed out after ${AI_TIMEOUT_MS}ms`));
+        }, AI_TIMEOUT_MS);
+      }),
+    ]);
+
+    return result ?? generateFallback(systemPrompt, data);
   } catch (error) {
     console.error('[AI] Error generating AI response:', error);
     return generateFallback(systemPrompt, data);

@@ -198,6 +198,7 @@ async function triggerDiscordWebhook(alert: Alert, allDevices: any[], aiMessage?
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ content }),
+    signal: AbortSignal.timeout(10_000),
   });
 
   logger.info('[Alerts] Webhook message successfully sent.');

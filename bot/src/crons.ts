@@ -48,8 +48,8 @@ function getAlertChannel(client: Client) {
 
 async function postDailyReport(client: Client, backendUrl: string) {
   try {
-    const usageRes = await fetch(`${backendUrl}/api/usage`).then((r) => r.json());
-    const alertsRes = await fetch(`${backendUrl}/api/alerts`).then((r) => r.json());
+    const usageRes = await fetch(`${backendUrl}/api/usage`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json());
+    const alertsRes = await fetch(`${backendUrl}/api/alerts`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json());
 
     const systemPrompt =
       'You are the friendly AI energy assistant for "The Big Boss Idea" office. Generate a daily summary report. Include: total kWh estimate, top consumer room, and one actionable tip. Keep it under 150 words. Use emojis and Stardew Valley style.';
@@ -74,8 +74,8 @@ async function postDailyReport(client: Client, backendUrl: string) {
 
 async function postWeeklyReport(client: Client, backendUrl: string) {
   try {
-    const alertsRes = await fetch(`${backendUrl}/api/alerts`).then((r) => r.json());
-    const leaderboardRes = await fetch(`${backendUrl}/api/leaderboard`).then((r) => r.json());
+    const alertsRes = await fetch(`${backendUrl}/api/alerts`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json());
+    const leaderboardRes = await fetch(`${backendUrl}/api/leaderboard`, { signal: AbortSignal.timeout(15_000) }).then((r) => r.json());
 
     const systemPrompt =
       'You are the friendly AI energy assistant for "The Big Boss Idea" office. Generate a weekly trend analysis. Compare this week to prior week, highlight improvements or concerns, keep it under 200 words. Use emojis and Stardew Valley style.';
