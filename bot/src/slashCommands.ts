@@ -118,14 +118,22 @@ async function handleRoom(interaction: ChatInputCommandInteraction) {
   const room = interaction.options.getString('name', true);
   const devices = state.devices.filter((d) => d.room === room);
 
-  const systemPrompt =
-    `Translate this list of devices in ${getRoomDisplayName(room)} into a conversational, fun update. ` +
-    `If everything is off, praise the room occupants. If things are left on, make a playful, judgey remark. ` +
-    `Keep it under 100 words.`;
+  const sorted = [...devices].sort((a, b) => a.name.localeCompare(b.name));
+  const lines = sorted.map((d) => {
+    const status = d.status.toUpperCase();
+    const icon = status === 'ON' ? '🟢 ON' : '🔴 OFF';
+    const power = d.powerDraw > 0 ? `${d.powerDraw}W` : '0W';
+    const time = new Date(d.lastChanged).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${d.name}: ${icon} | Power: ${power} | Last: ${time}`;
+  });
 
-  const aiMessage = await generateReply(systemPrompt, {
+  const systemPrompt =
+    `You are the snarky but friendly office energy assistant. Give a SHORT clever summary of this room's current status. ` +
+    `If everything is off, praise room occupants. If things are left on, make a playful, judgey remark. Keep it under 40 words. Use emojis. Do NOT repeat or list the devices.`;
+
+  const aiSummary = await generateReply(systemPrompt, {
     roomName: getRoomDisplayName(room),
-    devices: devices.map((d) => ({
+    devices: sorted.map((d) => ({
       name: d.name,
       status: d.status,
       powerDraw: d.powerDraw,
@@ -133,7 +141,8 @@ async function handleRoom(interaction: ChatInputCommandInteraction) {
     })),
   });
 
-  const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, aiMessage, COLORS.neutral);
+  const description = `${lines.join('\n')}\n\n${aiSummary}`;
+  const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, description, COLORS.neutral);
   await interaction.reply({ embeds: [embed], ephemeral: true });
 }
 

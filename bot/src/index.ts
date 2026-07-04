@@ -176,15 +176,22 @@ async function handlePrefixRoom(message: any, roomArg: string | undefined) {
   }
 
   const devices = state.devices.filter((d: any) => d.room === room);
+  const sorted = [...devices].sort((a: any, b: any) => a.name.localeCompare(b.name));
+  const lines = sorted.map((d: any) => {
+    const status = d.status.toUpperCase();
+    const icon = status === 'ON' ? '🟢 ON' : '🔴 OFF';
+    const power = d.powerDraw > 0 ? `${d.powerDraw}W` : '0W';
+    const time = new Date(d.lastChanged).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return `${d.name}: ${icon} | Power: ${power} | Last: ${time}`;
+  });
 
   const systemPrompt =
-    `Translate this list of devices in ${getRoomDisplayName(room)} into a conversational, fun update. ` +
-    `If everything is off, praise the room occupants. If things are left on, make a playful, judgey remark. ` +
-    `Keep it under 100 words. Use emojis.`;
+    `You are the snarky but friendly office energy assistant. Give a SHORT clever summary of this room's current status. ` +
+    `If everything is off, praise room occupants. If things are left on, make a playful, judgey remark. Keep it under 40 words. Use emojis. Do NOT repeat or list the devices.`;
 
-  const aiMessage = await generateReply(systemPrompt, {
+  const aiSummary = await generateReply(systemPrompt, {
     roomName: getRoomDisplayName(room),
-    devices: devices.map((d: any) => ({
+    devices: sorted.map((d: any) => ({
       name: d.name,
       status: d.status,
       powerDraw: d.powerDraw,
@@ -192,8 +199,8 @@ async function handlePrefixRoom(message: any, roomArg: string | undefined) {
     })),
   });
 
-  const { createEmbed, COLORS } = await import('./embeds');
-  const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, aiMessage, COLORS.neutral);
+  const description = `${lines.join('\n')}\n\n${aiSummary}`;
+  const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, description, COLORS.neutral);
   await message.reply({ embeds: [embed] });
 }
 
@@ -218,7 +225,6 @@ async function handlePrefixUsage(message: any) {
     timeOfDay: now.toLocaleTimeString(),
   });
 
-  const { createEmbed, COLORS } = await import('./embeds');
   const embed = createEmbed('📊 Power Usage', aiMessage, COLORS.neutral);
   await message.reply({ embeds: [embed] });
 }
@@ -238,7 +244,6 @@ async function handlePrefixAsk(message: any, question: string | undefined) {
     timestamp: new Date().toISOString(),
   });
 
-  const { createEmbed, COLORS } = await import('./embeds');
   const embed = createEmbed('🤖 AI Response', aiMessage, COLORS.neutral);
   await message.reply({ embeds: [embed] });
 }
