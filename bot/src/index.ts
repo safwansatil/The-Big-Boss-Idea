@@ -143,7 +143,9 @@ client.on('messageCreate', async (message) => {
     const cmd = (parts.shift() || '').toLowerCase();
     const args = parts;
 
-    if (cmd === 'room') {
+    if (cmd === 'status') {
+      await handlePrefixStatus(message);
+    } else if (cmd === 'room') {
       await handlePrefixRoom(message, args[0]);
     } else if (cmd === 'usage') {
       await handlePrefixUsage(message);
@@ -151,7 +153,7 @@ client.on('messageCreate', async (message) => {
       await handlePrefixAsk(message, args.join(' '));
     } else if (cmd === 'help') {
       await message.reply({
-        content: '🤖 Available: `/room`, `/usage`, `/ask`, `/toggle`, `/leaderboard`, `/health`, `/predict`, `/set-threshold`.\nPrefix: `!room <room>`, `!usage`, `!ask <question>`, `!help`.',
+        content: '🤖 Available: `/room`, `/usage`, `/ask`, `/toggle`, `/leaderboard`, `/health`, `/predict`, `/set-threshold`.\nPrefix: `!room <room>`, `!status`, `!usage`, `!ask <question>`, `!help`.',
       });
     }
   } catch (err) {
@@ -235,6 +237,32 @@ async function handlePrefixRoom(message: any, roomArg: string | undefined) {
 
   const description = `${lines.join('\n')}\n\n${aiSummary}`;
   const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, description, COLORS.neutral);
+  await message.reply({ embeds: [embed] });
+}
+
+async function handlePrefixStatus(message: any) {
+  const devices = state.devices;
+  const roomSummary: Record<string, { fansOn: number; lightsOn: number; totalDevices: number }> = {
+    'Drawing Room': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
+    'Work Room 1': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
+    'Work Room 2': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
+  };
+
+  for (const d of devices) {
+    const displayName = getRoomDisplayName(d.room);
+    roomSummary[displayName].totalDevices++;
+    if (d.status === 'on') {
+      if (d.type === 'fan') roomSummary[displayName].fansOn++;
+      if (d.type === 'light') roomSummary[displayName].lightsOn++;
+    }
+  }
+
+  const systemPrompt =
+    'You are the friendly AI energy assistant for "The Big Boss Idea" office. Translate the raw device summary into a warm, natural, and conversational Discord message. Do not output markdown tables. Use bullets or text paragraphs. Be playful, use emojis, and comment on which rooms have devices left ON. Keep it under 150 words.';
+
+  const aiMessage = await generateReply(systemPrompt, { rooms: roomSummary });
+
+  const embed = createEmbed('⚡ Office Status', aiMessage, COLORS.neutral);
   await message.reply({ embeds: [embed] });
 }
 
