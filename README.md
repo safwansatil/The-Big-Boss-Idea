@@ -5,7 +5,7 @@
 ---
 
 ##  Google Drive Video Demo
-> 🎥 **Watch the 3-Minute Walkthrough:** [Google Drive Demo Video Link](https://drive.google.com/drive/folders/1j_BLsO_BZpWuDSEtGhrJvv4jLnvzzM_L?usp=sharing)
+>  **Watch the 3-Minute Walkthrough:** [Google Drive Demo Video Link](https://drive.google.com/drive/folders/1j_BLsO_BZpWuDSEtGhrJvv4jLnvzzM_L?usp=sharing)
 >
 
 
@@ -120,6 +120,6 @@ Our system is structured as a unified monorepo leveraging lightweight services d
 * **Workday-Weighted Simulator Engine:** Features a custom background loop simulating active office occupancy. Devices organically toggle on and stay on during core business hours (9 AM - 5 PM) and have a high probability of shut-off in the evening.
 * **Stateful Anomaly Logging:** Automatically monitors and flags devices left on after-hours or active for too long (> 2 hours), persisting alerts in the `AlertLog` table to prevent duplicate notifications.
 
-### Chat Assistant: Discord.js & Google Gemini AI
-* **Cheeky Energy Reviews:** The Discord bot processes raw database telemetry and routes it through the Gemini AI SDK, translating dry metrics into humorous, conversational, and highly opinionated energy reports (queried via `!status`, `!usage`, or `!room`).
+### Chat Assistant: Discord.js & LLM
+* **Cheeky Energy Reviews:** The Discord bot processes raw database telemetry and routes it through the Gemini AI/OpenAI SDK, translating dry metrics into humorous, conversational, and highly opinionated energy reports (queried via `!status`, `!usage`, or `!room`).
 * **Auto-Resolving Webhook Alerts:** Posts alert notifications directly to your Discord channel when anomalies are first detected. When the device is toggled off, the system automatically resolves the warning in the database.
