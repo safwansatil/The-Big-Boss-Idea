@@ -1,139 +1,125 @@
-# ⚡ The Big Boss Idea
-### National Hackathon MVP - Cozy Office Energy Monitoring System
+#  The Big Boss Idea
 
-**The Big Boss Idea** is a Nintendo-style (Stardew Valley / Animal Crossing cozy-cottage vibe) office energy monitoring system designed to keep employees accountable for active device waste. It features an Express backend hosting a simulated device data layer (Postgres via Prisma), a Next.js real-time visual web dashboard, a Wokwi hardware schematic concept, and an opinionated Discord bot that queries active device logs and generates conversational, cheeky energy reviews using the Gemini AI SDK.
-
-Presented by team **IUT_zeroXP**.
+> by team **IUT_zeroWin** for IUTRS Techathon 2026 Hackathon
 
 ---
 
-## 🗺️ System Flow Diagram
+##  Google Drive Video Demo
+> 🎥 **Watch the 3-Minute Walkthrough:** [Google Drive Demo Video Link](https://drive.google.com/drive/folders/1j_BLsO_BZpWuDSEtGhrJvv4jLnvzzM_L?usp=sharing)
+>
 
-The high-level integration architecture and data flows are illustrated below:
 
+---
+
+##  Interactive Web Showcase
+
+Instead of cold, corporate data tables, **The Big Boss Idea** wraps workplace conservation in a delightful visual layout inspired by retro titles like *Stardew Valley* and *Animal Crossing*.
+
+###  Cozy Day & Night UI Themes
+The interface automatically transitions its visual style based on local client hours (or via a manual header override). Below, see how the office shift looks in daylight versus a cozy night layout with illuminated glows:
+
+|  Day Mode |  Night Mode |
+| :---: | :---: |
+| ![Day Mode](assets/webui_day.png) | ![Night Mode](assets/webui_night.png) |
+
+### 📊 Real-time Device Operations & Analytics
+Toggle active devices to instantly sync Wattage across the top-down pixel map and view system anomalies (like after-hours usage or devices left on too long):
+
+![Analytics Dashboard](assets/webui_analysis_dashboard.png)
+
+---
+
+##  Quick-Start Guide (Setup & Running)
+
+This repository is built as a unified monorepo. All services (Backend, Dashboard, Discord Bot) load configuration details from a **single, central `.env` file** in the repository root.
+
+### 1. Configure the Environment
+Copy the environment template in the repository root:
+```bash
+cp .env.example .env
 ```
-[Simulated Device Layer] ──> [Postgres (Prisma)] ──> [Express Backend]
-                                                            │
-                                  ┌─────────────────────────┴─────────────────────────┐
-                                  ▼                                                   ▼
-                       [Next.js Web Dashboard]                             [Discord Bot Client]
-                       - Real-time updates (SSE)                           - Conversational AI (Gemini)
-                       - Cozy CSS/SVG Visuals                              - Prefix & Slash commands
-                       - Semicircle Power Gauge                            - Proactive webhook alerts
-```
+Open `.env` and insert your credentials:
+* `DATABASE_URL`: Connection string (PostgreSQL/Neon).
+* `AI_API_KEY`: Google Gemini or provider API key.
+* `AI_API_KEY`: Google Gemini or provider API key.
+* `DISCORD_BOT_TOKEN`: Discord Bot API client token.
+* `DISCORD_WEBHOOK_URL`: Discord alert channel webhook.
 
-> [!NOTE]
-> A complete system diagram editable code file is saved in the repository at [assets/system_diagram.excalidraw](file:///d:/new_wrkspc/techathon_hackathon_2026/assets/system_diagram.excalidraw). You can import this file directly into [Excalidraw](https://excalidraw.com) to view or edit the full design canvas.
-
----
-
-## 🔌 Hardware / Electrical Schematic
-
-The conceptual circuit schematic representing one room's wiring (ESP32/Arduino, Relays, Lights, Fans, and Current Sensors) is saved directly in the repository.
-
-* **Microcontroller:** ESP32 DevKit V1
-* **Lights:** 3 LEDs controlled by 3 Relays (GPIO Pins 12, 14, 27)
-* **Fans:** 2 DC Motors controlled by 2 Relays (GPIO Pins 26, 25)
-* **Current Sensor:** ACS712 Current Sensor reading total power draw (ADC Pin 34)
-
-Judges can open the circuit wiring simulation and code files in the repository.
-
----
-
-## ⚙️ Setup & Installation
-
-### Step 1: Environment Configuration
-The project uses a **single, unified `.env` file** in the repository root for all packages:
-
-1. In the root directory, copy `.env.example` to `.env`:
-   ```bash
-   cp .env.example .env
-   ```
-2. Open `.env` and fill in your actual credentials:
-   * **`DATABASE_URL`**: Your Neon Postgres connection string.
-   * **`AI_API_KEY`**: Your Gemini API key.
-   * **`DISCORD_BOT_TOKEN`**: Your Discord bot token.
-   * **`DISCORD_WEBHOOK_URL`**: Your Discord alert channel Webhook.
-   * **`STUCK_ON_THRESHOLD_MS`**: `7200000` (e.g. 2 hours, set to `10000` / 10s during video demo).
-
----
-
-### Step 2: Database Migration & Seeding
-Prisma commands must be executed from the `/backend` folder (which automatically climbs up to read the root `.env`):
+### 2. Deploy Database & Seed Starting Data
+Deploy the Prisma schema to Postgres and seed the starting room devices:
 ```bash
 cd backend
 npm install
 npx prisma generate
-npx prisma migrate dev --name init_energy_db
+npx prisma migrate dev --name init_db
 npx prisma db seed
 ```
-*Note: Seeding creates all 15 devices (Drawing Room: 2 fans, 3 lights; Work Room 1: 2 fans, 3 lights; Work Room 2: 2 fans, 3 lights) with a realistic mix of ON/OFF states and randomized past offsets (0 to 4 hours ago) so that stuck-on alerts are testable immediately.*
+
+### 3. Run Services
+Launch each system service in a separate terminal from the root folder:
+
+* **Terminal 1: Express API & Simulator**
+  ```bash
+  cd backend
+  npm run dev
+  ```
+  *(Starts Server-Sent Events, endpoints, and the workday device occupancy loop)*
+
+* **Terminal 2: Next.js Web Dashboard**
+  ```bash
+  cd dashboard
+  npm install
+  npm run dev
+  ```
+  *(Dashboard runs live at http://localhost:3000)*
+
+* **Terminal 3: Discord Bot Client**
+  ```bash
+  cd bot
+  npm install
+  npm run dev
+  ```
+
 
 ---
 
-## 🚀 Running the Services
+##  System Blueprints & Hardware
 
-You will need three terminal windows to run all services in development mode:
+### 1. High-Level System Architecture
+Flow of telemetry information from simulated hardware endpoints down to the databases, REST interfaces, client UIs, and the Discord server:
 
-### 1. Launch the Backend API & Simulation Loop
-Starts the server on `http://localhost:5000` (along with the weighted day/night simulation loop):
-```bash
-cd backend
-npm run dev
-```
+![System Architecture](assets/system_design.png)
 
-### 2. Launch the Next.js Web Dashboard
-Starts the Next.js development server on `http://localhost:3000` (automatically reading the backend URL configuration from the root `.env`):
-```bash
-cd dashboard
-npm install
-npm run dev
-```
+> [!TIP]
+> The original Excalidraw design source is located at [assets/system_diagram.excalidraw](./assets/system_diagram.excalidraw). You can import it back into [Excalidraw](https://excalidraw.com) to edit or inspect.
 
-### 3. Launch the Discord Bot Client
-Starts the Discord bot client:
-```bash
-cd bot
-npm install
-npm run dev
-```
+### 2. ESP32 Physical Circuit Schematic
+Wiring blueprint representing a single office room's physical sensor network and output relays:
+
+![Hardware Schematic](Circuit-Schema/schema.jpeg)
+
+* **Microcontroller:** ESP32 DevKit V1
+* **Relay-Controlled Outputs:** 3 Lights (GPIO 12, 14, 27) and 2 Fans (GPIO 26, 25)
+* **Telemetry Sensing:** ACS712 Current Sensor reading total power draw (ADC Pin 34)
+*  **Live Simulator:** [Simulate the ESP32 circuit on Wokwi](https://wokwi.com/projects/468548194305602561)
+*  **Hardware Files:** Arduino sketch and component mappings can be inspected in the [Circuit-Schema](./Circuit-Schema) directory.
 
 ---
 
-## 🧠 Dynamic Simulation & Alert Pipeline
+## Features & Technology Stack
 
-* **Occupancy Weights:** The simulator implements realistic time-of-day biased state changes (e.g., higher probability of turning devices ON during work hours 9 AM – 5 PM; 80% chance of turning devices OFF outside work hours).
-* **Alert Deduplication:** Active alerts are evaluated and logged to the `AlertLog` table in the database. Fired alerts are deduplicated by `type + room + sortedDeviceIds` to prevent duplicate database logs and Discord webhook spam.
-* **Auto-Resolution:** Once a device is turned off or office hours resume, the alert resolves automatically, updating its status to `resolved = true` in Postgres.
+Our system is structured as a unified monorepo leveraging lightweight services designed to work in synergy:
 
----
+### Frontend: Next.js (TypeScript) & Vanilla CSS
+* **Retro Cozy-Cottage Aesthetic:** Instead of flat, corporate dashboard grids, the dashboard is themed after games like *Stardew Valley* and *Animal Crossing*. It features custom top-down office layouts, spinning fan blades (driven by CSS keyframe animations), and warm lightbulb glows.
+* **Day & Night Transitions:** Theme styles shift between warm parchment (day) and dusky indigo (night) automatically based on the user's local clock (or manual override).
+* **Real-time Event Synchronization (SSE):** Utilizes Server-Sent Events (SSE) to push instant state updates across all active dashboard clients, ensuring zero manual page refreshes when a device toggles.
 
-## 📊 REST API & SSE Contracts
+###  Backend: Node.js, Express (TypeScript) & Prisma ORM
+* **Unified Neon PostgreSQL Database:** Stores device details and persistent alert configurations under a single source of truth.
+* **Workday-Weighted Simulator Engine:** Features a custom background loop simulating active office occupancy. Devices organically toggle on and stay on during core business hours (9 AM - 5 PM) and have a high probability of shut-off in the evening.
+* **Stateful Anomaly Logging:** Automatically monitors and flags devices left on after-hours or active for too long (> 2 hours), persisting alerts in the `AlertLog` table to prevent duplicate notifications.
 
-* **GET `/health`**: Returns `{ "status": "healthy", "database": "connected" }`.
-* **GET `/devices`**: Returns a list of all 15 devices.
-* **GET `/rooms/:room`**: Filtered list of devices (`drawing`, `work1`, `work2`).
-* **GET `/usage`**: Returns total active wattage load and a per-room breakdown.
-* **GET `/alerts`**: Returns active computed anomalies.
-* **POST `/devices/:id/toggle`**: Toggles a device status (e.g. `drawing-fan-1`) and broadcasts state.
-* **GET `/stream` (SSE)**: Pushes updates to the dashboard instantly on simulation ticks or manual clicks.
-
----
-
-## 🤖 Discord Bot Commands
-
-| Command | Expected Output / Behavior |
-| :--- | :--- |
-| **`!status`** / **/status** | Returns a friendly, conversational summary of active room device counts. |
-| **`!room <name>`** / **/room** | Status of a specific room (drawing, work1, work2). |
-| **`!usage`** / **/usage** | Live power consumption and daily estimated kWh usage. |
-| **/predict** | Proposes EOD usage forecasts and one actionable energy tip. |
-| **/ask** | Interactively answers energy-saving questions using Stardew Valley-style AI. |
-
----
-
-## 🎮 How to Demo (Video Guide)
-
-1. Open two browser tabs side-by-side at [http://localhost:3000](http://localhost:3000). Toggling a device in Tab A instantly propagates the updates (animated fan blades, glowing bulbs, dial needle) in Tab B.
-2. Go to Discord and type `!usage` or `/status` to show conversational Gemini replies.
-3. Turn a device ON after hours, wait for the dynamic AI webhook alert to fire in your Discord channel, and watch it resolve in the database once turned OFF.
+### Chat Assistant: Discord.js & Google Gemini AI
+* **Cheeky Energy Reviews:** The Discord bot processes raw database telemetry and routes it through the Gemini AI SDK, translating dry metrics into humorous, conversational, and highly opinionated energy reports (queried via `!status`, `!usage`, or `!room`).
+* **Auto-Resolving Webhook Alerts:** Posts alert notifications directly to your Discord channel when anomalies are first detected. When the device is toggled off, the system automatically resolves the warning in the database.
