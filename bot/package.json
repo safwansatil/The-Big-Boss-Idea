@@ -6,16 +6,19 @@
   "scripts": {
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "deploy-commands": "ts-node src/deploy-commands.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "@big-boss/ai-utils": "*",
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
-    "openai": "^6.45.0"
+    "node-cron": "^3.0.3",
+    "pino": "^8.17.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
+    "@types/node-cron": "^3.0.11",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.4.5"

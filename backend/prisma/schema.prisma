@@ -23,6 +23,7 @@ model AlertLog {
   room      String   // "drawing" | "work1" | "work2"
   deviceIds Json     // JSON array of device IDs: e.g., ["work1-fan-1", "work1-light-2"]
   message   String
+  aiMessage String?  // Optional AI-enhanced prose (nullable)
   timestamp DateTime @default(now())
   resolved  Boolean  @default(false)
 }

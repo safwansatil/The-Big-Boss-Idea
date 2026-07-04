@@ -15,11 +15,14 @@
     "seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.11.0",
+    "@big-boss/ai-utils": "*",
     "@prisma/client": "^5.14.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "express-rate-limit": "^6.7.0",
+    "pino": "^8.17.0",
+    "pino-http": "^7.1.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

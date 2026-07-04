@@ -1,5 +1,7 @@
 import { prisma } from './db';
 import { generateReply } from './ai';
+import { getStuckOnThresholdMs } from './config';
+import { logger } from './logger';
 
 export interface Alert {
   type: 'after-hours' | 'stuck-on';
@@ -9,20 +11,22 @@ export interface Alert {
   timestamp: Date;
 }
 
-/**
- * Evaluates current device states against alert rules.
- * Writes new active alerts to the AlertLog database table and resolves completed ones.
- */
+const AI_CACHE_TTL_MS = 10 * 60 * 1000;
+const aiMessageCache = new Map<string, { message: string; expiresAt: number }>();
+
+function getAiCacheKey(alert: Alert): string {
+  const sortedIds = [...alert.deviceIds].sort();
+  return `${alert.type}:${alert.room}:${sortedIds.join(',')}`;
+}
+
 export async function getAlerts(): Promise<Alert[]> {
   const devices = await prisma.device.findMany();
   const now = new Date();
-  
-  // 1. Stuck-on threshold (default 2 hours = 7200000ms, configurable via env STUCK_ON_THRESHOLD_MS)
-  const stuckOnThresholdMs = Number(process.env.STUCK_ON_THRESHOLD_MS) || 2 * 60 * 60 * 1000;
-  
-  // 2. After-hours check: 9 AM to 5 PM local time (outside these hours is after-hours)
+
+  const stuckOnThresholdMs = getStuckOnThresholdMs();
+
   const hour = now.getHours();
-  const isAfterHours = true;
+  const isAfterHours = hour < 9 || hour >= 17;
 
   const activeAlerts: Alert[] = [];
   const rooms = ['drawing', 'work1', 'work2'];
@@ -34,7 +38,6 @@ export async function getAlerts(): Promise<Alert[]> {
     if (onDevices.length > 0) {
       const roomName = getRoomDisplayName(room);
 
-      // Check: after-hours
       if (isAfterHours) {
         activeAlerts.push({
           type: 'after-hours',
@@ -45,7 +48,6 @@ export async function getAlerts(): Promise<Alert[]> {
         });
       }
 
-      // Check: stuck-on
       const stuckDevices = onDevices.filter((d) => {
         const elapsed = now.getTime() - new Date(d.lastChanged).getTime();
         return elapsed > stuckOnThresholdMs;
@@ -64,29 +66,21 @@ export async function getAlerts(): Promise<Alert[]> {
     }
   }
 
-  // Synchronize computed active alerts with database AlertLog table
   try {
     await syncAlertLogs(activeAlerts, devices);
   } catch (err) {
-    console.error('[Alerts] Error synchronizing alert logs in DB:', err);
+    logger.error({ err }, '[Alerts] Error synchronizing alert logs in DB');
   }
 
   return activeAlerts;
 }
 
-/**
- * Handles database AlertLog inserts for new alerts and updates resolved = true for resolved alerts.
- * Also triggers Discord Webhook for new alerts.
- */
 async function syncAlertLogs(activeAlerts: Alert[], allDevices: any[]) {
-  // Fetch unresolved alert logs from the database
   const unresolvedLogs = await prisma.alertLog.findMany({ where: { resolved: false } });
 
-  // 1. Process active alerts: write to DB if it doesn't already exist
   for (const alert of activeAlerts) {
     const sortedDeviceIds = [...alert.deviceIds].sort();
 
-    // Check if there is an existing unresolved AlertLog with same type, room and device list
     const logExists = unresolvedLogs.some((log) => {
       if (log.type !== alert.type || log.room !== alert.room) return false;
       const logDeviceIds = (log.deviceIds as string[]) || [];
@@ -95,27 +89,53 @@ async function syncAlertLogs(activeAlerts: Alert[], allDevices: any[]) {
     });
 
     if (!logExists) {
-      // Create new AlertLog entry in DB
+      const aiPromptPayload = {
+        alert: {
+          type: alert.type,
+          room: getRoomDisplayName(alert.room),
+          message: alert.message,
+        },
+        devices: allDevices
+          .filter((d) => alert.deviceIds.includes(d.id))
+          .map((d) => ({ name: d.name })),
+      };
+
+      const cacheKey = getAiCacheKey(alert);
+      const cached = aiMessageCache.get(cacheKey);
+      let aiMessage: string | undefined;
+
+      if (cached && cached.expiresAt > Date.now()) {
+        aiMessage = cached.message;
+      } else {
+        try {
+          const systemPrompt =
+            'You are the office energy monitoring system. Alert the boss/team on Discord about an anomalous energy event. Keep the message highly conversational, friendly, slightly opinionated about energy wastage. Use a Nintendo/Stardew Valley retro feel, employ emojis, and be clear about which room and devices are causing the alert. Do NOT exceed 3 sentences.';
+          aiMessage = await generateReply(systemPrompt, aiPromptPayload);
+          aiMessageCache.set(cacheKey, { message: aiMessage, expiresAt: Date.now() + AI_CACHE_TTL_MS });
+        } catch (err) {
+          logger.error({ err }, '[Alerts] Failed to generate AI message');
+        }
+      }
+
       await prisma.alertLog.create({
         data: {
           type: alert.type,
           room: alert.room,
           deviceIds: sortedDeviceIds,
           message: alert.message,
+          aiMessage: aiMessage ?? null,
           timestamp: alert.timestamp,
           resolved: false,
         },
       });
-      console.log(`[AlertLog] Fired and saved new active alert: ${alert.type} in ${alert.room}`);
+      logger.info(`[AlertLog] Fired and saved new active alert: ${alert.type} in ${alert.room}`);
 
-      // Dispatch proactive Discord notification using Gemini wrapper
-      triggerDiscordWebhook(alert, allDevices).catch((err) => {
-        console.error('[Alerts] Error sending webhook notify:', err);
+      triggerDiscordWebhook(alert, allDevices, aiMessage).catch((err) => {
+        logger.error({ err }, '[Alerts] Error sending webhook notify');
       });
     }
   }
 
-  // 2. Mark resolved logs: if an unresolved log is not in the active alerts list, set resolved = true
   for (const log of unresolvedLogs) {
     const logDeviceIds = (log.deviceIds as string[]) || [];
     const sortedLogDeviceIds = [...logDeviceIds].sort();
@@ -131,52 +151,26 @@ async function syncAlertLogs(activeAlerts: Alert[], allDevices: any[]) {
         where: { id: log.id },
         data: { resolved: true },
       });
-      console.log(`[AlertLog] Resolved alert ID ${log.id}: ${log.type} in ${log.room}`);
+      logger.info(`[AlertLog] Resolved alert ID ${log.id}: ${log.type} in ${log.room}`);
     }
   }
 }
 
-/**
- * Triggers Discord Webhook proactive alerting using AI-generated conversational text.
- */
-async function triggerDiscordWebhook(alert: Alert, allDevices: any[]) {
+async function triggerDiscordWebhook(alert: Alert, allDevices: any[], aiMessage?: string) {
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   if (!webhookUrl) return;
 
-  console.log(`[Alerts] Sending proactive Discord alert for: ${alert.type} in ${alert.room}`);
+  logger.info(`[Alerts] Sending proactive Discord alert for: ${alert.type} in ${alert.room}`);
 
-  const systemPrompt = 
-    `You are the office energy monitoring system. You are alerting the boss/team on Discord ` +
-    `about an anomalous energy event. Keep the message highly conversational, friendly, ` +
-    `and slightly opinionated about energy wastage. Use a Nintendo/Stardew Valley retro feel, ` +
-    `employ emojis, and be clear about which room and devices are causing the alert. Do NOT exceed 3 sentences.`;
+  const content = aiMessage || alert.message;
 
-  const roomName = getRoomDisplayName(alert.room);
-  const activeDevices = allDevices.filter((d) => alert.deviceIds.includes(d.id));
-
-  const aiMessage = await generateReply(systemPrompt, {
-    alert: {
-      type: alert.type,
-      room: roomName,
-      message: alert.message,
-      timestamp: alert.timestamp.toISOString(),
-    },
-    devices: activeDevices.map((d) => ({
-      name: d.name,
-      lastChanged: d.lastChanged.toISOString()
-    }))
+  await fetch(webhookUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
   });
 
-  try {
-    await fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: aiMessage }),
-    });
-    console.log(`[Alerts] Webhook message successfully sent.`);
-  } catch (err) {
-    console.error('[Alerts] Failed to post Discord Webhook:', err);
-  }
+  logger.info('[Alerts] Webhook message successfully sent.');
 }
 
 function getRoomDisplayName(room: string): string {

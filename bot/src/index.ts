@@ -1,13 +1,22 @@
 import './loadEnv'; // Must be first import to load root .env before others resolve
-import { Client, GatewayIntentBits, Message } from 'discord.js';
+import { Client, GatewayIntentBits } from 'discord.js';
+import { logger } from './logger';
+import { state, type Alert } from './state';
+import { SSEClient } from './sseClient';
+import { setupCrons } from './crons';
+import { updateVoiceChannelName } from './voiceStatus';
+import { handleSlashCommand, handleModalSubmit, handleSelectToggle, getRoomDisplayName } from './slashCommands';
 import { generateReply } from './ai';
+import { createEmbed, COLORS } from './embeds';
 
-const token = process.env.DISCORD_BOT_TOKEN;
+const token = process.env.DISCORD_BOT_TOKEN || '';
 const backendPort = process.env.BACKEND_PORT || 5000;
 const backendUrl = `http://localhost:${backendPort}`;
+const voiceChannelId = process.env.VOICE_CHANNEL_ID || '';
+const alertChannelId = process.env.DISCORD_ALLOWED_CHANNEL_ID || '';
 
 if (!token) {
-  console.error('[Bot] Error: DISCORD_BOT_TOKEN is not defined in the environment.');
+  logger.error('[Bot] Error: DISCORD_BOT_TOKEN is not defined in the environment.');
   process.exit(1);
 }
 
@@ -19,167 +28,217 @@ const client = new Client({
   ],
 });
 
-client.once('ready', () => {
-  console.log(`===============================================`);
-  console.log(`   DISCORD BOT IS ONLINE                       `);
-  console.log(`   Logged in as: ${client.user?.tag}          `);
-  console.log(`===============================================`);
-});
+const postedAlertKeys = new Set<string>();
 
-client.on('messageCreate', async (message: Message) => {
-  // Ignore bot messages
-  if (message.author.bot) return;
+function getAlertKey(alert: Alert): string {
+  const sortedIds = [...(alert.deviceIds || [])].sort();
+  return `${alert.type}:${alert.room}:${sortedIds.join(',')}`;
+}
 
-  const content = message.content.trim();
+async function postAlertIfNew(client: any, alert: Alert) {
+  if (!alertChannelId) return;
+  const channel = client.channels.cache.get(alertChannelId);
+  if (!channel || !('send' in channel)) return;
 
-  // Command: !status
-  if (content === '!status') {
-    await handleStatus(message);
+  const key = getAlertKey(alert);
+  if (postedAlertKeys.has(key)) {
+    return;
   }
-  // Command: !room <name>
-  else if (content.startsWith('!room')) {
-    await handleRoom(message, content);
-  }
-  // Command: !usage
-  else if (content === '!usage') {
-    await handleUsage(message);
-  }
-});
+  postedAlertKeys.add(key);
 
-/**
- * Handles !status command: Fetches all devices, computes counts, and generates AI reply.
- */
-async function handleStatus(message: Message) {
   try {
-    const res = await fetch(`${backendUrl}/api/devices`);
-    if (!res.ok) throw new Error(`Backend returned status ${res.status}`);
-    const devices = (await res.json()) as any[];
+    const roomName = getRoomDisplayName(alert.room);
+    const description = alert.type === 'after-hours'
+      ? `After-hours alert in ${roomName}: ${alert.message}`
+      : `Stuck-on alert in ${roomName}: ${alert.message}`;
 
-    // Structure room summary
-    const roomSummary: Record<string, { fansOn: number; lightsOn: number; totalDevices: number }> = {
-      'Drawing Room': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
-      'Work Room 1': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
-      'Work Room 2': { fansOn: 0, lightsOn: 0, totalDevices: 0 },
-    };
+    const embed = createEmbed(
+      alert.type === 'after-hours' ? '🌙 After-Hours Alert' : '⚠️ Stuck-On Alert',
+      description,
+      COLORS.alert,
+    );
 
-    for (const d of devices) {
-      const displayName = getRoomDisplayName(d.room);
-      roomSummary[displayName].totalDevices++;
-      if (d.status === 'on') {
-        if (d.type === 'fan') roomSummary[displayName].fansOn++;
-        if (d.type === 'light') roomSummary[displayName].lightsOn++;
-      }
+    await channel.send({ embeds: [embed] });
+    logger.info(`[Alerts] Proactively posted ${alert.type} alert to alert channel for ${roomName}`);
+  } catch (err) {
+    logger.error({ err }, '[Alerts] Failed to post proactive alert to channel');
+  }
+}
+
+async function syncPostedAlerts(alerts: Alert[]) {
+  const activeKeys = new Set(alerts.map(getAlertKey));
+  for (const key of postedAlertKeys) {
+    if (!activeKeys.has(key)) {
+      postedAlertKeys.delete(key);
+    }
+  }
+}
+
+client.once('ready', () => {
+  logger.info(`Bot online as ${client.user?.tag}`);
+
+  const sse = new SSEClient(`${backendUrl}/api/stream`);
+  sse.onUpdate(() => {
+    if (voiceChannelId && state.usage) {
+      updateVoiceChannelName(client, voiceChannelId, state.usage.totalWatts).catch((err) => {
+        logger.warn({ err }, '[Voice] Failed to update channel on SSE tick');
+      });
     }
 
-    const systemPrompt = 
-      `You are the friendly, slightly quirky AI energy assistant for 'The Big Boss Idea' office. ` +
-      `Translate the raw device summary into a warm, natural, and conversational Discord message. ` +
-      `Do not output markdown tables. Use bullets or text paragraphs. Be playful, use emojis, and comment on ` +
-      `which rooms have devices left ON. Keep it under 150 words.`;
+    if (alertChannelId && state.alerts) {
+      for (const alert of state.alerts) {
+        postAlertIfNew(client, alert).catch((err) => {
+          logger.error({ err }, '[Alerts] Error posting proactive alert');
+        });
+      }
+      syncPostedAlerts(state.alerts);
+    }
+  });
+  sse.start();
 
-    const aiMessage = await generateReply(systemPrompt, { rooms: roomSummary });
-    await message.reply(aiMessage);
-  } catch (err) {
-    console.error('[Bot] Error in !status command:', err);
-    await message.reply('🤖 *Oh no! I couldn\'t fetch the device status from the energy server. Is the backend running?*');
-  }
-}
+  setupCrons(client, backendUrl);
+});
 
-/**
- * Handles !room <name> command: Fetches devices filtered by room.
- */
-async function handleRoom(message: Message, content: string) {
-  const parts = content.split(' ');
-  if (parts.length < 2) {
-    await message.reply('🤖 *Usage:* `!room <drawing | work1 | work2>`');
-    return;
-  }
-
-  const rawRoom = parts.slice(1).join(' ').toLowerCase().replace(/\s+/g, '');
-  let roomKey = '';
-
-  if (rawRoom.includes('drawing')) {
-    roomKey = 'drawing';
-  } else if (rawRoom.includes('work1') || (rawRoom.includes('work') && rawRoom.includes('1'))) {
-    roomKey = 'work1';
-  } else if (rawRoom.includes('work2') || (rawRoom.includes('work') && rawRoom.includes('2'))) {
-    roomKey = 'work2';
-  } else {
-    await message.reply('🤖 *Unknown room.* Please use `drawing`, `work1`, or `work2`.');
-    return;
-  }
-
+client.on('messageCreate', async (message) => {
   try {
-    const res = await fetch(`${backendUrl}/api/rooms/${roomKey}`);
-    if (!res.ok) throw new Error(`Backend returned status ${res.status}`);
-    const devices = (await res.json()) as any[];
+    if (message.author.bot || !message.guild) return;
+    const content = message.content.trim();
+    if (!content.startsWith('!')) return;
 
-    const systemPrompt =
-      `You are the friendly, slightly cheeky AI energy assistant for 'The Big Boss Idea' office. ` +
-      `Translate this list of devices in ${getRoomDisplayName(roomKey)} into a conversational, fun update. ` +
-      `If everything is off, praise the room occupants. If things are left on, make a playful, judgey remark. ` +
-      `Keep it under 100 words.`;
+    const parts = content.slice(1).trim().split(/\s+/);
+    const cmd = (parts.shift() || '').toLowerCase();
+    const args = parts;
 
-    const aiMessage = await generateReply(systemPrompt, {
-      roomName: getRoomDisplayName(roomKey),
-      devices: devices.map(d => ({
-        name: d.name,
-        status: d.status,
-        powerDraw: d.powerDraw,
-        lastChanged: d.lastChanged
-      }))
-    });
-    await message.reply(aiMessage);
+    if (cmd === 'room') {
+      await handlePrefixRoom(message, args[0]);
+    } else if (cmd === 'usage') {
+      await handlePrefixUsage(message);
+    } else if (cmd === 'ask') {
+      await handlePrefixAsk(message, args.join(' '));
+    } else if (cmd === 'help') {
+      await message.reply({
+        content: '🤖 Available: `/room`, `/usage`, `/ask`, `/toggle`, `/leaderboard`, `/health`, `/predict`, `/set-threshold`.\nPrefix: `!room <room>`, `!usage`, `!ask <question>`, `!help`.',
+      });
+    }
   } catch (err) {
-    console.error('[Bot] Error in !room command:', err);
-    await message.reply('🤖 *Oh no! I couldn\'t fetch the room status from the energy server. Is the backend running?*');
+    logger.error({ err }, '[Bot] Prefix command error');
+    try {
+      await message.reply('⚠️ Something went wrong. Try again later.');
+    } catch {
+      // ignore
+    }
   }
-}
+});
 
-/**
- * Handles !usage command: Fetches energy usage, calculates estimated daily kWh, and generates AI reply.
- */
-async function handleUsage(message: Message) {
+client.on('interactionCreate', async (interaction) => {
   try {
-    const res = await fetch(`${backendUrl}/api/usage`);
-    if (!res.ok) throw new Error(`Backend returned status ${res.status}`);
-    const usageData = (await res.json()) as any;
-
-    const totalWatts = usageData.totalWatts;
-    
-    // Estimate today's kWh usage: assume current power draw has been constant for the hours elapsed since midnight.
-    const now = new Date();
-    const hoursElapsed = now.getHours() + now.getMinutes() / 60;
-    // kWh = (Watts * hours) / 1000
-    const todayKwhEstimate = Number(((totalWatts * hoursElapsed) / 1000).toFixed(2));
-
-    const systemPrompt =
-      `You are the friendly, opinionated AI energy assistant for 'The Big Boss Idea' office. ` +
-      `Interpret the current power draw and the estimated daily usage (kWh). Provide a playful, conversational response. ` +
-      `If usage is high (e.g. > 200W), warn the boss. If it's low, congratulate the team. Keep it under 100 words.`;
-
-    const aiMessage = await generateReply(systemPrompt, {
-      totalWatts,
-      perRoom: usageData.perRoom,
-      todayKwhEstimate,
-      timeOfDay: now.toLocaleTimeString(),
-    });
-
-    await message.reply(aiMessage);
+    if (interaction.isChatInputCommand()) {
+      await handleSlashCommand(interaction, backendUrl);
+    } else if (interaction.isModalSubmit()) {
+      await handleModalSubmit(interaction);
+    } else if (interaction.isStringSelectMenu()) {
+      const customId = interaction.customId;
+      if (customId.startsWith('toggle-')) {
+        const deviceId = interaction.values[0];
+        if (!deviceId) {
+          await interaction.update({ content: '⚠️ Invalid selection.', components: [] });
+          return;
+        }
+        await interaction.deferUpdate();
+        const result = await handleSelectToggle(client, backendUrl, deviceId);
+        const msg = result.embed.data.description ?? (result.success ? 'Updated.' : 'Failed.');
+        await interaction.editReply({
+          content: msg,
+          embeds: [result.embed],
+          components: [],
+        });
+      }
+    }
   } catch (err) {
-    console.error('[Bot] Error in !usage command:', err);
-    await message.reply('🤖 *Oh no! I couldn\'t fetch the energy usage stats. Is the backend running?*');
+    logger.error({ err }, '[Bot] Unhandled interaction error');
+    try {
+      if (interaction.isRepliable() && !interaction.replied && !interaction.deferred) {
+        await interaction.reply({ content: '⚠️ Something went wrong. Try again later.', ephemeral: true });
+      }
+    } catch {
+      // ignore follow-up errors
+    }
   }
-}
+});
 
-function getRoomDisplayName(room: string): string {
-  switch (room) {
-    case 'drawing': return 'Drawing Room';
-    case 'work1': return 'Work Room 1';
-    case 'work2': return 'Work Room 2';
-    default: return room;
-  }
-}
-
-// Log in to Discord
 client.login(token);
+
+async function handlePrefixRoom(message: any, roomArg: string | undefined) {
+  const room = roomArg?.toLowerCase();
+  if (!room || !['drawing', 'work1', 'work2'].includes(room)) {
+    await message.reply('⚠️ Usage: `!room <drawing|work1|work2>`');
+    return;
+  }
+
+  const devices = state.devices.filter((d: any) => d.room === room);
+
+  const systemPrompt =
+    `Translate this list of devices in ${getRoomDisplayName(room)} into a conversational, fun update. ` +
+    `If everything is off, praise the room occupants. If things are left on, make a playful, judgey remark. ` +
+    `Keep it under 100 words. Use emojis.`;
+
+  const aiMessage = await generateReply(systemPrompt, {
+    roomName: getRoomDisplayName(room),
+    devices: devices.map((d: any) => ({
+      name: d.name,
+      status: d.status,
+      powerDraw: d.powerDraw,
+      lastChanged: d.lastChanged,
+    })),
+  });
+
+  const { createEmbed, COLORS } = await import('./embeds');
+  const embed = createEmbed(`📋 ${getRoomDisplayName(room)}`, aiMessage, COLORS.neutral);
+  await message.reply({ embeds: [embed] });
+}
+
+async function handlePrefixUsage(message: any) {
+  const usage = state.usage;
+  if (!usage) {
+    await message.reply('⚠️ Usage data not available yet. Try again in a moment.');
+    return;
+  }
+
+  const now = new Date();
+  const hoursElapsed = now.getHours() + now.getMinutes() / 60;
+  const todayKwhEstimate = Number(((usage.totalWatts * hoursElapsed) / 1000).toFixed(2));
+
+  const systemPrompt =
+    'You are the friendly, opinionated AI energy assistant for "The Big Boss Idea" office. Interpret the current power draw and the estimated daily usage (kWh). Provide a playful, conversational response. If usage is high (e.g. > 200W), warn the boss. If it\'s low, congratulate the team. Keep it under 100 words. Use emojis.';
+
+  const aiMessage = await generateReply(systemPrompt, {
+    totalWatts: usage.totalWatts,
+    perRoom: usage.perRoom,
+    todayKwhEstimate,
+    timeOfDay: now.toLocaleTimeString(),
+  });
+
+  const { createEmbed, COLORS } = await import('./embeds');
+  const embed = createEmbed('📊 Power Usage', aiMessage, COLORS.neutral);
+  await message.reply({ embeds: [embed] });
+}
+
+async function handlePrefixAsk(message: any, question: string | undefined) {
+  if (!question) {
+    await message.reply('⚠️ Usage: `!ask <your question>`');
+    return;
+  }
+
+  const systemPrompt =
+    'You are the friendly, opinionated AI assistant for "The Big Boss Idea" office. You answer questions about office energy usage, device status, room conditions, and energy-saving tips. If you don\'t know something, say so honestly. Be conversational, use emojis, Nintendo/Stardew Valley style, and keep answers under 150 words.';
+
+  const aiMessage = await generateReply(systemPrompt, {
+    question,
+    user: message.author.tag,
+    timestamp: new Date().toISOString(),
+  });
+
+  const { createEmbed, COLORS } = await import('./embeds');
+  const embed = createEmbed('🤖 AI Response', aiMessage, COLORS.neutral);
+  await message.reply({ embeds: [embed] });
+}
