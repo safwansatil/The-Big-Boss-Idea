@@ -22,7 +22,7 @@ export async function getAlerts(): Promise<Alert[]> {
   
   // 2. After-hours check: 9 AM to 5 PM local time (outside these hours is after-hours)
   const hour = now.getHours();
-  const isAfterHours = hour < 9 || hour >= 17;
+  const isAfterHours = true;
 
   const activeAlerts: Alert[] = [];
   const rooms = ['drawing', 'work1', 'work2'];

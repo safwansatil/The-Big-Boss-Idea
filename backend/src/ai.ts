@@ -20,7 +20,7 @@ export async function generateReply(systemPrompt: string, data: any): Promise<st
     if (provider === 'gemini') {
       const genAI = new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({
-        model: 'gemini-1.5-flash',
+        model: 'gemini-2.0-flash',
         systemInstruction: systemPrompt,
       });
 
