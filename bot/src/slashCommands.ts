@@ -209,12 +209,24 @@ export async function handleModalSubmit(interaction: ModalSubmitInteraction) {
   const question = interaction.fields.getTextInputValue('question');
 
   const systemPrompt =
-    'You are the friendly, opinionated AI assistant for "The Big Boss Idea" office. You answer questions about office energy usage, device status, room conditions, and energy-saving tips. If you don\'t know something, say so honestly. Be conversational, use emojis, Nintendo/Stardew Valley style, and keep answers under 150 words.';
+    'You are the friendly, opinionated AI assistant for "The Big Boss Idea" office. You answer questions about office energy usage, device status, room conditions, and energy-saving tips using the currentData provided. Based on the provided current room usage and device states, answer accurately. Do NOT say you lack access to real-time data. Be conversational, use emojis, Nintendo/Stardew Valley style, and keep answers under 150 words. If you don\'t know something not included in currentData, say so honestly.';
 
   const aiMessage = await generateReply(systemPrompt, {
     question,
     user: interaction.user.tag,
     timestamp: new Date().toISOString(),
+    currentData: {
+      totalWatts: state.usage?.totalWatts ?? null,
+      perRoom: state.usage?.perRoom ?? null,
+      devices: state.devices.map((d) => ({
+        id: d.id,
+        name: d.name,
+        room: d.room,
+        status: d.status,
+        powerDraw: d.powerDraw,
+        lastChanged: d.lastChanged,
+      })),
+    },
   });
 
   const embed = createEmbed('🤖 AI Response', aiMessage, COLORS.neutral);
